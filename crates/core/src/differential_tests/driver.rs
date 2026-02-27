@@ -8,7 +8,7 @@ use alloy::{
     hex,
     json_abi::JsonAbi,
     network::{Ethereum, TransactionBuilder},
-    primitives::{Address, TxHash, U256, address},
+    primitives::{Address, TxHash, U256},
     rpc::types::{
         TransactionReceipt, TransactionRequest,
         trace::geth::{
@@ -18,9 +18,9 @@ use alloy::{
     },
 };
 use anyhow::{Context as _, Result, bail};
-use futures::{TryStreamExt, future::try_join_all};
+use futures::TryStreamExt;
 use indexmap::IndexMap;
-use revive_dt_common::types::{PlatformIdentifier, PrivateKeyAllocator, VmIdentifier};
+use revive_dt_common::types::{PlatformIdentifier, PrivateKeyAllocator};
 use revive_dt_format::{
     metadata::{ContractInstance, ContractPathAndIdent},
     steps::{
@@ -30,7 +30,6 @@ use revive_dt_format::{
     },
     traits::ResolutionContext,
 };
-use subxt::{ext::codec::Decode, metadata::Metadata, tx::Payload};
 use tokio::sync::Mutex;
 use tracing::{error, info, instrument};
 
@@ -286,46 +285,21 @@ where
         // than including the actual bytecode. This creates a problem where a factory contract could
         // be deployed but the code it's supposed to create is not on chain. Therefore, we upload
         // all the code to the chain prior to running any transactions on the driver.
-        if platform_information.platform.vm_identifier() == VmIdentifier::PolkaVM {
-            #[subxt::subxt(runtime_metadata_path = "../../assets/revive_metadata.scale")]
-            pub mod revive {}
-
-            let metadata_bytes = include_bytes!("../../../../assets/revive_metadata.scale");
-            let metadata = Metadata::decode(&mut &metadata_bytes[..])
-                .context("Failed to decode the revive metadata")?;
-
-            const RUNTIME_PALLET_ADDRESS: Address =
-                address!("0x6d6f646c70792f70616464720000000000000000");
-
-            let code_upload_tasks = compiler_output
-                .contracts
-                .values()
-                .flat_map(|item| item.values())
-                .map(|(code_string, _)| {
-                    let metadata = metadata.clone();
-                    async move {
-                        let code = alloy::hex::decode(code_string)
-                            .context("Failed to hex-decode the post-link code. This is a bug")?;
-                        let payload = revive::tx().revive().upload_code(code, u128::MAX);
-                        let encoded_payload = payload
-                            .encode_call_data(&metadata)
-                            .context("Failed to encode the upload code payload")?;
-
-                        let tx_request = TransactionRequest::default()
-                            .from(deployer_address)
-                            .to(RUNTIME_PALLET_ADDRESS)
-                            .input(encoded_payload.into());
-                        platform_information
-                            .node
-                            .execute_transaction(tx_request)
-                            .await
-                            .context("Failed to execute transaction")
-                    }
-                });
-            try_join_all(code_upload_tasks)
-                .await
-                .context("Code upload failed")?;
-        }
+        // For EVM nodes, upload_code is a no-op.
+        let bytecodes: Vec<Vec<u8>> = compiler_output
+            .contracts
+            .values()
+            .flat_map(|item| item.values())
+            .map(|(code_string, _)| {
+                hex::decode(code_string)
+                    .context("Failed to hex-decode the post-link code. This is a bug")
+            })
+            .collect::<Result<_, _>>()?;
+        platform_information
+            .node
+            .upload_code(&bytecodes, deployer_address)
+            .await
+            .context("Code upload failed")?;
 
         Ok(ExecutionState::new(
             compiler_output.contracts,

@@ -1,4 +1,5 @@
 mod eth_rpc_proxy;
+pub mod polkavm_upload;
 mod process;
 
 pub use eth_rpc_proxy::*;

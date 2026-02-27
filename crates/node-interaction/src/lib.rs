@@ -80,4 +80,15 @@ pub trait EthereumNode {
 
     fn provider(&self)
     -> Pin<Box<dyn Future<Output = anyhow::Result<DynProvider<Ethereum>>> + '_>>;
+
+    /// Uploads contract code to the chain before test execution. This is a no-op for
+    /// EVM-based nodes but required for PolkaVM nodes where factory contracts reference
+    /// code by hash rather than including bytecode inline.
+    fn upload_code(
+        &self,
+        _bytecodes: &[Vec<u8>],
+        _deployer: Address,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + '_>> {
+        Box::pin(async { Ok(()) })
+    }
 }

@@ -592,6 +592,23 @@ impl EthereumNode for SubstrateNode {
                 .map(|provider| provider.map(|provider| provider.erased())),
         )
     }
+
+    fn upload_code(
+        &self,
+        bytecodes: &[Vec<u8>],
+        deployer: Address,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + '_>> {
+        let tx_requests =
+            crate::helpers::polkavm_upload::encode_upload_transactions(bytecodes, deployer);
+        Box::pin(async move {
+            let tx_requests = tx_requests?;
+            let tasks = tx_requests.into_iter().map(|tx| self.execute_transaction(tx));
+            futures::future::try_join_all(tasks)
+                .await
+                .context("Code upload failed")?;
+            Ok(())
+        })
+    }
 }
 
 pub struct SubstrateNodeResolver {
