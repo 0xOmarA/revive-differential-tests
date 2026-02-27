@@ -142,14 +142,13 @@ pub async fn create_test_definitions_stream<'a>(
                         serde_json::to_string(&additional_information).unwrap(),
                     "Ignoring Test Case"
                 );
-                let _ = test.reporter
-                    .report_test_ignored_event(
-                        reason.to_string(),
-                        additional_information
-                            .into_iter()
-                            .map(|(k, v)| (k.into(), v))
-                            .collect::<IndexMap<_, _>>(),
-                    );
+                let _ = test.reporter.report_test_ignored_event(
+                    reason.to_string(),
+                    additional_information
+                        .into_iter()
+                        .map(|(k, v)| (k.into(), v))
+                        .collect::<IndexMap<_, _>>(),
+                );
                 None
             }
         }

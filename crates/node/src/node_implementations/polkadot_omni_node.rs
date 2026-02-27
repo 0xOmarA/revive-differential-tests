@@ -14,27 +14,24 @@ use alloy::{
     primitives::{Address, BlockHash, BlockNumber, BlockTimestamp, StorageKey, TxHash, U256},
     providers::{
         Provider,
-        ext::DebugApi,
         fillers::{CachedNonceManager, ChainIdFiller, NonceFiller},
     },
     rpc::types::{
         EIP1186AccountProofResponse, TransactionReceipt, TransactionRequest,
-        trace::geth::{
-            DiffMode, GethDebugTracingOptions, GethTrace, PreStateConfig, PreStateFrame,
-        },
+        trace::geth::{DiffMode, GethDebugTracingOptions, GethTrace},
     },
 };
 use anyhow::Context as _;
 use futures::{FutureExt, Stream, StreamExt};
 use revive_common::EVMVersion;
 use revive_dt_common::fs::clear_directory;
-use revive_dt_format::traits::ResolverApi;
-use serde_json::json;
 use revive_dt_config::*;
+use revive_dt_format::traits::ResolverApi;
 use revive_dt_node_interaction::EthereumNode;
 use revive_dt_report::{
     EthereumMinedBlockInformation, MinedBlockInformation, SubstrateMinedBlockInformation,
 };
+use serde_json::json;
 use subxt::{OnlineClient, SubstrateConfig};
 use tokio::sync::OnceCell;
 use tracing::{instrument, trace};
@@ -365,15 +362,8 @@ impl EthereumNode for PolkadotOmnichainNode {
         transaction: TransactionRequest,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<TxHash>> + '_>> {
         Box::pin(async move {
-            let provider = self
-                .provider()
-                .await
-                .context("Failed to create the provider for transaction submission")?;
-            let pending_transaction = provider
-                .send_transaction(transaction)
-                .await
-                .context("Failed to submit the transaction through the provider")?;
-            Ok(*pending_transaction.tx_hash())
+            let provider = self.provider().await?.erased();
+            crate::helpers::shared_node_ops::submit_transaction(&provider, transaction).await
         })
     }
 
@@ -382,13 +372,8 @@ impl EthereumNode for PolkadotOmnichainNode {
         tx_hash: TxHash,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<TransactionReceipt>> + '_>> {
         Box::pin(async move {
-            self.provider()
-                .await
-                .context("Failed to create provider for getting the receipt")?
-                .get_transaction_receipt(tx_hash)
-                .await
-                .context("Failed to get the receipt of the transaction")?
-                .context("Failed to get the receipt of the transaction")
+            let provider = self.provider().await?.erased();
+            crate::helpers::shared_node_ops::get_receipt(&provider, tx_hash).await
         })
     }
 
@@ -397,15 +382,8 @@ impl EthereumNode for PolkadotOmnichainNode {
         transaction: TransactionRequest,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<TransactionReceipt>> + '_>> {
         Box::pin(async move {
-            self.provider()
-                .await
-                .context("Failed to create provider for transaction submission")?
-                .send_transaction(transaction)
-                .await
-                .context("Encountered an error when submitting a transaction")?
-                .get_receipt()
-                .await
-                .context("Failed to get the receipt for the transaction")
+            let provider = self.provider().await?.erased();
+            crate::helpers::shared_node_ops::execute_transaction(&provider, transaction).await
         })
     }
 
@@ -415,12 +393,9 @@ impl EthereumNode for PolkadotOmnichainNode {
         trace_options: GethDebugTracingOptions,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<GethTrace>> + '_>> {
         Box::pin(async move {
-            self.provider()
+            let provider = self.provider().await?.erased();
+            crate::helpers::shared_node_ops::trace_transaction(&provider, tx_hash, trace_options)
                 .await
-                .context("Failed to create provider for debug tracing")?
-                .debug_trace_transaction(tx_hash, trace_options)
-                .await
-                .context("Failed to obtain debug trace from eth-proxy")
         })
     }
 
@@ -429,19 +404,8 @@ impl EthereumNode for PolkadotOmnichainNode {
         tx_hash: TxHash,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<DiffMode>> + '_>> {
         Box::pin(async move {
-            let trace_options = GethDebugTracingOptions::prestate_tracer(PreStateConfig {
-                diff_mode: Some(true),
-                disable_code: None,
-                disable_storage: None,
-            });
-            match self
-                .trace_transaction(tx_hash, trace_options)
-                .await?
-                .try_into_pre_state_frame()?
-            {
-                PreStateFrame::Diff(diff) => Ok(diff),
-                _ => anyhow::bail!("expected a diff mode trace"),
-            }
+            let provider = self.provider().await?.erased();
+            crate::helpers::shared_node_ops::state_diff(&provider, tx_hash).await
         })
     }
 
@@ -450,12 +414,8 @@ impl EthereumNode for PolkadotOmnichainNode {
         address: Address,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + '_>> {
         Box::pin(async move {
-            self.provider()
-                .await
-                .context("Failed to get the eth-rpc provider")?
-                .get_balance(address)
-                .await
-                .map_err(Into::into)
+            let provider = self.provider().await?.erased();
+            crate::helpers::shared_node_ops::balance_of(&provider, address).await
         })
     }
 
@@ -465,13 +425,8 @@ impl EthereumNode for PolkadotOmnichainNode {
         keys: Vec<StorageKey>,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<EIP1186AccountProofResponse>> + '_>> {
         Box::pin(async move {
-            self.provider()
-                .await
-                .context("Failed to get the eth-rpc provider")?
-                .get_proof(address, keys)
-                .latest()
-                .await
-                .map_err(Into::into)
+            let provider = self.provider().await?.erased();
+            crate::helpers::shared_node_ops::latest_state_proof(&provider, address, keys).await
         })
     }
 
@@ -601,7 +556,9 @@ impl EthereumNode for PolkadotOmnichainNode {
             crate::helpers::polkavm_upload::encode_upload_transactions(bytecodes, deployer);
         Box::pin(async move {
             let tx_requests = tx_requests?;
-            let tasks = tx_requests.into_iter().map(|tx| self.execute_transaction(tx));
+            let tasks = tx_requests
+                .into_iter()
+                .map(|tx| self.execute_transaction(tx));
             futures::future::try_join_all(tasks)
                 .await
                 .context("Code upload failed")?;

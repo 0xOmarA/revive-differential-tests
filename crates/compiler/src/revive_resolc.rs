@@ -58,7 +58,8 @@ impl Resolc {
         /// This is a cache of all of the resolc compiler objects. Since we do not currently support
         /// multiple resolc compiler versions, so our cache is just keyed by the solc compiler and
         /// its version to the resolc compiler.
-        static COMPILERS_CACHE: LazyLock<DashMap<(Solc, u32, u32), Resolc>> = LazyLock::new(Default::default);
+        static COMPILERS_CACHE: LazyLock<DashMap<(Solc, u32, u32), Resolc>> =
+            LazyLock::new(Default::default);
 
         let resolc_configuration = context.as_resolc_configuration();
         let resolc_path = resolc_configuration.path.clone();

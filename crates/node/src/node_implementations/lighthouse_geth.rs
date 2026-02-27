@@ -28,14 +28,11 @@ use alloy::{
     },
     providers::{
         Provider,
-        ext::DebugApi,
         fillers::{CachedNonceManager, ChainIdFiller, FillProvider, NonceFiller, TxFiller},
     },
     rpc::types::{
         EIP1186AccountProofResponse, TransactionReceipt, TransactionRequest,
-        trace::geth::{
-            DiffMode, GethDebugTracingOptions, GethTrace, PreStateConfig, PreStateFrame,
-        },
+        trace::geth::{DiffMode, GethDebugTracingOptions, GethTrace},
     },
 };
 use anyhow::Context as _;
@@ -501,15 +498,8 @@ impl EthereumNode for LighthouseGethNode {
         transaction: TransactionRequest,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<TxHash>> + '_>> {
         Box::pin(async move {
-            let provider = self
-                .http_provider()
-                .await
-                .context("Failed to create the provider for transaction submission")?;
-            let pending_transaction = provider
-                .send_transaction(transaction)
-                .await
-                .context("Failed to submit the transaction through the provider")?;
-            Ok(*pending_transaction.tx_hash())
+            let provider = self.http_provider().await?.erased();
+            crate::helpers::shared_node_ops::submit_transaction(&provider, transaction).await
         })
     }
 
@@ -523,13 +513,8 @@ impl EthereumNode for LighthouseGethNode {
         tx_hash: TxHash,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<TransactionReceipt>> + '_>> {
         Box::pin(async move {
-            self.ws_provider()
-                .await
-                .context("Failed to create provider for getting the receipt")?
-                .get_transaction_receipt(tx_hash)
-                .await
-                .context("Failed to get the receipt of the transaction")?
-                .context("Failed to get the receipt of the transaction")
+            let provider = self.ws_provider().await?.erased();
+            crate::helpers::shared_node_ops::get_receipt(&provider, tx_hash).await
         })
     }
 
@@ -544,15 +529,8 @@ impl EthereumNode for LighthouseGethNode {
         transaction: TransactionRequest,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<TransactionReceipt>> + '_>> {
         Box::pin(async move {
-            self.provider()
-                .await
-                .context("Failed to create provider for transaction submission")?
-                .send_transaction(transaction)
-                .await
-                .context("Encountered an error when submitting a transaction")?
-                .get_receipt()
-                .await
-                .context("Failed to get the receipt for the transaction")
+            let provider = self.provider().await?;
+            crate::helpers::shared_node_ops::execute_transaction(&provider, transaction).await
         })
     }
 
@@ -563,12 +541,9 @@ impl EthereumNode for LighthouseGethNode {
         trace_options: GethDebugTracingOptions,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<GethTrace>> + '_>> {
         Box::pin(async move {
-            self.provider()
+            let provider = self.provider().await?;
+            crate::helpers::shared_node_ops::trace_transaction(&provider, tx_hash, trace_options)
                 .await
-                .context("Failed to create provider for tracing")?
-                .debug_trace_transaction(tx_hash, trace_options)
-                .await
-                .context("Failed to get the transaction trace")
         })
     }
 
@@ -578,21 +553,8 @@ impl EthereumNode for LighthouseGethNode {
         tx_hash: TxHash,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<DiffMode>> + '_>> {
         Box::pin(async move {
-            let trace_options = GethDebugTracingOptions::prestate_tracer(PreStateConfig {
-                diff_mode: Some(true),
-                disable_code: None,
-                disable_storage: None,
-            });
-            match self
-                .trace_transaction(tx_hash, trace_options)
-                .await
-                .context("Failed to trace transaction for prestate diff")?
-                .try_into_pre_state_frame()
-                .context("Failed to convert trace into pre-state frame")?
-            {
-                PreStateFrame::Diff(diff) => Ok(diff),
-                _ => anyhow::bail!("expected a diff mode trace"),
-            }
+            let provider = self.provider().await?;
+            crate::helpers::shared_node_ops::state_diff(&provider, tx_hash).await
         })
     }
 
@@ -602,12 +564,8 @@ impl EthereumNode for LighthouseGethNode {
         address: Address,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + '_>> {
         Box::pin(async move {
-            self.ws_provider()
-                .await
-                .context("Failed to get the Geth provider")?
-                .get_balance(address)
-                .await
-                .map_err(Into::into)
+            let provider = self.ws_provider().await?.erased();
+            crate::helpers::shared_node_ops::balance_of(&provider, address).await
         })
     }
 
@@ -618,13 +576,8 @@ impl EthereumNode for LighthouseGethNode {
         keys: Vec<StorageKey>,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<EIP1186AccountProofResponse>> + '_>> {
         Box::pin(async move {
-            self.ws_provider()
-                .await
-                .context("Failed to get the Geth provider")?
-                .get_proof(address, keys)
-                .latest()
-                .await
-                .map_err(Into::into)
+            let provider = self.ws_provider().await?.erased();
+            crate::helpers::shared_node_ops::latest_state_proof(&provider, address, keys).await
         })
     }
 

@@ -74,6 +74,14 @@ pub enum ReportAction {
     },
 }
 
+fn parse_nonzero_usize(s: &str) -> Result<usize, String> {
+    let n: usize = s.parse().map_err(|e| format!("{e}"))?;
+    if n == 0 {
+        return Err("value must be at least 1".into());
+    }
+    Ok(n)
+}
+
 /// The CLI for the differential testing and benchmarking framework.
 #[revive_dt_proc_macros::context(
     context_type_ident = "Context",
@@ -519,7 +527,7 @@ mod context {
     #[configuration(key = "concurrency")]
     pub struct ConcurrencyConfiguration {
         /// Determines the amount of nodes that will be spawned for each chain.
-        #[clap(default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..))]
+        #[clap(default_value_t = 5, value_parser = parse_nonzero_usize)]
         pub number_of_nodes: usize,
 
         /// Determines the amount of tokio worker threads that will will be used.
@@ -527,7 +535,7 @@ mod context {
             default_value_t = std::thread::available_parallelism()
                 .map(|n| n.get() * 4 / 6)
                 .unwrap_or(1),
-            value_parser = clap::value_parser!(u64).range(1..),
+            value_parser = parse_nonzero_usize,
         )]
         pub number_of_threads: usize,
 

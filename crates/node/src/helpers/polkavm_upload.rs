@@ -8,8 +8,7 @@ use subxt::{ext::codec::Decode, metadata::Metadata, tx::Payload};
 #[subxt::subxt(runtime_metadata_path = "../../assets/revive_metadata.scale")]
 mod revive {}
 
-const RUNTIME_PALLET_ADDRESS: Address =
-    address!("0x6d6f646c70792f70616464720000000000000000");
+const RUNTIME_PALLET_ADDRESS: Address = address!("0x6d6f646c70792f70616464720000000000000000");
 
 /// Encodes PolkaVM code upload transactions for all provided contract bytecodes.
 ///

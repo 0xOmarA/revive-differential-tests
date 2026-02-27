@@ -129,8 +129,7 @@ impl Watcher {
                             *block.tx_counts.entry(step_path.clone()).or_default() += 1
                         }
                     }
-                    let _ = reporter
-                        .report_block_mined_event(block.clone());
+                    let _ = reporter.report_block_mined_event(block.clone());
 
                     if *all_transactions_submitted.read().await
                         && watch_for_transaction_hashes.read().await.is_empty()
@@ -159,11 +158,10 @@ impl Watcher {
                             block_timestamp: block.ethereum_block_information.block_timestamp,
                             block_number: block.ethereum_block_information.block_number,
                         };
-                        let _ = reporter
-                            .report_step_transaction_information_event(
-                                step_path,
-                                transaction_information,
-                            );
+                        let _ = reporter.report_step_transaction_information_event(
+                            step_path,
+                            transaction_information,
+                        );
                     }
 
                     info!(
