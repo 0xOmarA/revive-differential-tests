@@ -12,650 +12,481 @@ use revive_dt_format::metadata::ContractInstance;
 use revive_dt_format::metadata::Metadata;
 use revive_dt_format::steps::StepPath;
 use semver::Version;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{broadcast, mpsc::UnboundedSender, oneshot};
 
 use crate::MinedBlockInformation;
 use crate::TransactionInformation;
 use crate::{ExecutionSpecifier, ReporterEvent, TestSpecifier, common::MetadataFilePath};
 
-macro_rules! __report_gen_emit_test_specific {
-    (
-        $ident:ident,
-        $variant_ident:ident,
-        $skip_field:ident;
-        $( $bname:ident : $bty:ty, )*
-        ;
-        $( $aname:ident : $aty:ty, )*
-    ) => {
-        paste::paste! {
-            pub fn [< report_ $variant_ident:snake _event >](
-                &self
-                $(, $bname: impl Into<$bty> )*
-                $(, $aname: impl Into<$aty> )*
-            ) -> anyhow::Result<()> {
-                self.report([< $variant_ident Event >] {
-                    $skip_field: self.test_specifier.clone()
-                    $(, $bname: $bname.into() )*
-                    $(, $aname: $aname.into() )*
-                })
-            }
-        }
-    };
+// ---------------------------------------------------------------------------
+// Event structs
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub(crate) struct SubscribeToEventsEvent {
+    pub tx: oneshot::Sender<broadcast::Receiver<ReporterEvent>>,
 }
 
-macro_rules! __report_gen_emit_test_specific_by_parse {
-    (
-        $ident:ident,
-        $variant_ident:ident,
-        $skip_field:ident;
-        $( $bname:ident : $bty:ty, )* ; $( $aname:ident : $aty:ty, )*
-    ) => {
-        __report_gen_emit_test_specific!(
-            $ident, $variant_ident, $skip_field;
-            $( $bname : $bty, )* ; $( $aname : $aty, )*
-        );
-    };
+#[derive(Debug)]
+pub(crate) struct MetadataFileDiscoveryEvent {
+    pub path: MetadataFilePath,
+    pub metadata: Metadata,
 }
 
-macro_rules! __report_gen_scan_before {
-    (
-        $ident:ident, $variant_ident:ident;
-        $( $before:ident : $bty:ty, )*
-        ;
-        test_specifier : $skip_ty:ty,
-        $( $after:ident : $aty:ty, )*
-        ;
-    ) => {
-        __report_gen_emit_test_specific_by_parse!(
-            $ident, $variant_ident, test_specifier;
-            $( $before : $bty, )* ; $( $after : $aty, )*
-        );
-    };
-    (
-        $ident:ident, $variant_ident:ident;
-        $( $before:ident : $bty:ty, )*
-        ;
-        $name:ident : $ty:ty, $( $after:ident : $aty:ty, )*
-        ;
-    ) => {
-        __report_gen_scan_before!(
-            $ident, $variant_ident;
-            $( $before : $bty, )* $name : $ty,
-            ;
-            $( $after : $aty, )*
-            ;
-        );
-    };
-    (
-        $ident:ident, $variant_ident:ident;
-        $( $before:ident : $bty:ty, )*
-        ;
-        ;
-    ) => {};
+#[derive(Debug)]
+pub(crate) struct TestCaseDiscoveryEvent {
+    pub test_specifier: Arc<TestSpecifier>,
 }
 
-macro_rules! __report_gen_for_variant {
-    (
-        $ident:ident,
-        $variant_ident:ident;
-    ) => {};
-    (
-        $ident:ident,
-        $variant_ident:ident;
-        $( $field_ident:ident : $field_ty:ty ),+ $(,)?
-    ) => {
-        __report_gen_scan_before!(
-            $ident, $variant_ident;
-            ;
-            $( $field_ident : $field_ty, )*
-            ;
-        );
-    };
+#[derive(Debug)]
+pub(crate) struct TestIgnoredEvent {
+    pub test_specifier: Arc<TestSpecifier>,
+    pub reason: String,
+    pub additional_fields: IndexMap<String, serde_json::Value>,
 }
 
-macro_rules! __report_gen_emit_execution_specific {
-    (
-        $ident:ident,
-        $variant_ident:ident,
-        $skip_field:ident;
-        $( $bname:ident : $bty:ty, )*
-        ;
-        $( $aname:ident : $aty:ty, )*
-    ) => {
-        paste::paste! {
-            pub fn [< report_ $variant_ident:snake _event >](
-                &self
-                $(, $bname: impl Into<$bty> )*
-                $(, $aname: impl Into<$aty> )*
-            ) -> anyhow::Result<()> {
-                self.report([< $variant_ident Event >] {
-                    $skip_field: self.execution_specifier.clone()
-                    $(, $bname: $bname.into() )*
-                    $(, $aname: $aname.into() )*
-                })
-            }
-        }
-    };
+#[derive(Debug)]
+pub(crate) struct TestSucceededEvent {
+    pub test_specifier: Arc<TestSpecifier>,
+    pub steps_executed: usize,
 }
 
-macro_rules! __report_gen_emit_execution_specific_by_parse {
-    (
-        $ident:ident,
-        $variant_ident:ident,
-        $skip_field:ident;
-        $( $bname:ident : $bty:ty, )* ; $( $aname:ident : $aty:ty, )*
-    ) => {
-        __report_gen_emit_execution_specific!(
-            $ident, $variant_ident, $skip_field;
-            $( $bname : $bty, )* ; $( $aname : $aty, )*
-        );
-    };
+#[derive(Debug)]
+pub(crate) struct TestFailedEvent {
+    pub test_specifier: Arc<TestSpecifier>,
+    pub reason: String,
 }
 
-macro_rules! __report_gen_scan_before_exec {
-    (
-        $ident:ident, $variant_ident:ident;
-        $( $before:ident : $bty:ty, )*
-        ;
-        execution_specifier : $skip_ty:ty,
-        $( $after:ident : $aty:ty, )*
-        ;
-    ) => {
-        __report_gen_emit_execution_specific_by_parse!(
-            $ident, $variant_ident, execution_specifier;
-            $( $before : $bty, )* ; $( $after : $aty, )*
-        );
-    };
-    (
-        $ident:ident, $variant_ident:ident;
-        $( $before:ident : $bty:ty, )*
-        ;
-        $name:ident : $ty:ty, $( $after:ident : $aty:ty, )*
-        ;
-    ) => {
-        __report_gen_scan_before_exec!(
-            $ident, $variant_ident;
-            $( $before : $bty, )* $name : $ty,
-            ;
-            $( $after : $aty, )*
-            ;
-        );
-    };
-    (
-        $ident:ident, $variant_ident:ident;
-        $( $before:ident : $bty:ty, )*
-        ;
-        ;
-    ) => {};
+#[derive(Debug)]
+pub(crate) struct NodeAssignedEvent {
+    pub test_specifier: Arc<TestSpecifier>,
+    pub id: usize,
+    pub platform_identifier: PlatformIdentifier,
+    pub connection_string: String,
 }
 
-macro_rules! __report_gen_for_variant_exec {
-    (
-        $ident:ident,
-        $variant_ident:ident;
-    ) => {};
-    (
-        $ident:ident,
-        $variant_ident:ident;
-        $( $field_ident:ident : $field_ty:ty ),+ $(,)?
-    ) => {
-        __report_gen_scan_before_exec!(
-            $ident, $variant_ident;
-            ;
-            $( $field_ident : $field_ty, )*
-            ;
-        );
-    };
+#[derive(Debug)]
+pub(crate) struct PreLinkContractsCompilationSucceededEvent {
+    pub execution_specifier: Arc<ExecutionSpecifier>,
+    pub compiler_version: Version,
+    pub compiler_path: PathBuf,
+    pub is_cached: bool,
+    pub compiler_input: Option<CompilerInput>,
+    pub compiler_output: CompilerOutput,
 }
 
-macro_rules! __report_gen_emit_step_execution_specific {
-    (
-        $ident:ident,
-        $variant_ident:ident,
-        $skip_field:ident;
-        $( $bname:ident : $bty:ty, )*
-        ;
-        $( $aname:ident : $aty:ty, )*
-    ) => {
-        paste::paste! {
-            pub fn [< report_ $variant_ident:snake _event >](
-                &self
-                $(, $bname: impl Into<$bty> )*
-                $(, $aname: impl Into<$aty> )*
-            ) -> anyhow::Result<()> {
-                self.report([< $variant_ident Event >] {
-                    $skip_field: self.step_specifier.clone()
-                    $(, $bname: $bname.into() )*
-                    $(, $aname: $aname.into() )*
-                })
-            }
-        }
-    };
+#[derive(Debug)]
+pub(crate) struct PostLinkContractsCompilationSucceededEvent {
+    pub execution_specifier: Arc<ExecutionSpecifier>,
+    pub compiler_version: Version,
+    pub compiler_path: PathBuf,
+    pub is_cached: bool,
+    pub compiler_input: Option<CompilerInput>,
+    pub compiler_output: CompilerOutput,
 }
 
-macro_rules! __report_gen_emit_step_execution_specific_by_parse {
-    (
-        $ident:ident,
-        $variant_ident:ident,
-        $skip_field:ident;
-        $( $bname:ident : $bty:ty, )* ; $( $aname:ident : $aty:ty, )*
-    ) => {
-        __report_gen_emit_step_execution_specific!(
-            $ident, $variant_ident, $skip_field;
-            $( $bname : $bty, )* ; $( $aname : $aty, )*
-        );
-    };
+#[derive(Debug)]
+pub(crate) struct PreLinkContractsCompilationFailedEvent {
+    pub execution_specifier: Arc<ExecutionSpecifier>,
+    pub compiler_version: Option<Version>,
+    pub compiler_path: Option<PathBuf>,
+    pub compiler_input: Option<CompilerInput>,
+    pub reason: String,
 }
 
-macro_rules! __report_gen_scan_before_step {
-    (
-        $ident:ident, $variant_ident:ident;
-        $( $before:ident : $bty:ty, )*
-        ;
-        step_specifier : $skip_ty:ty,
-        $( $after:ident : $aty:ty, )*
-        ;
-    ) => {
-        __report_gen_emit_step_execution_specific_by_parse!(
-            $ident, $variant_ident, step_specifier;
-            $( $before : $bty, )* ; $( $after : $aty, )*
-        );
-    };
-    (
-        $ident:ident, $variant_ident:ident;
-        $( $before:ident : $bty:ty, )*
-        ;
-        $name:ident : $ty:ty, $( $after:ident : $aty:ty, )*
-        ;
-    ) => {
-        __report_gen_scan_before_step!(
-            $ident, $variant_ident;
-            $( $before : $bty, )* $name : $ty,
-            ;
-            $( $after : $aty, )*
-            ;
-        );
-    };
-    (
-        $ident:ident, $variant_ident:ident;
-        $( $before:ident : $bty:ty, )*
-        ;
-        ;
-    ) => {};
+#[derive(Debug)]
+pub(crate) struct PostLinkContractsCompilationFailedEvent {
+    pub execution_specifier: Arc<ExecutionSpecifier>,
+    pub compiler_version: Option<Version>,
+    pub compiler_path: Option<PathBuf>,
+    pub compiler_input: Option<CompilerInput>,
+    pub reason: String,
 }
 
-macro_rules! __report_gen_for_variant_step {
-    (
-        $ident:ident,
-        $variant_ident:ident;
-    ) => {};
-    (
-        $ident:ident,
-        $variant_ident:ident;
-        $( $field_ident:ident : $field_ty:ty ),+ $(,)?
-    ) => {
-        __report_gen_scan_before_step!(
-            $ident, $variant_ident;
-            ;
-            $( $field_ident : $field_ty, )*
-            ;
-        );
-    };
+#[derive(Debug)]
+pub(crate) struct LibrariesDeployedEvent {
+    pub execution_specifier: Arc<ExecutionSpecifier>,
+    pub libraries: BTreeMap<ContractInstance, Address>,
 }
 
-/// Defines the runner-event which is sent from the test runners to the report aggregator.
-///
-/// This macro defines a number of things related to the reporting infrastructure and the interface
-/// used. First of all, it defines the enum of all of the possible events that the runners can send
-/// to the aggregator. For each one of the variants it defines a separate struct for it to allow the
-/// variant field in the enum to be put in a [`Box`].
-///
-/// In addition to the above, it defines [`From`] implementations for the various event types for
-/// the [`RunnerEvent`] enum essentially allowing for events such as [`CorpusFileDiscoveryEvent`] to
-/// be converted into a [`RunnerEvent`].
-///
-/// In addition to the above, it also defines the [`RunnerEventReporter`] which is a wrapper around
-/// an [`UnboundedSender`] allowing for events to be sent to the report aggregator.
-///
-/// With the above description, we can see that this macro defines almost all of the interface of
-/// the reporting infrastructure, from the enum itself, to its associated types, and also to the
-/// reporter that's used to report events to the aggregator.
-///
-/// [`UnboundedSender`]: tokio::sync::mpsc::UnboundedSender
-macro_rules! define_event {
-    (
-        $(#[$enum_meta: meta])*
-        $vis: vis enum $ident: ident {
-            $(
-                $(#[$variant_meta: meta])*
-                $variant_ident: ident {
-                    $(
-                        $(#[$field_meta: meta])*
-                        $field_ident: ident: $field_ty: ty
-                    ),* $(,)?
-                }
-            ),* $(,)?
-        }
-    ) => {
-        paste::paste! {
-            $(#[$enum_meta])*
-            #[derive(Debug)]
-            $vis enum $ident {
-                $(
-                    $(#[$variant_meta])*
-                    $variant_ident(Box<[<$variant_ident Event>]>)
-                ),*
-            }
-
-            impl $ident {
-                pub fn variant_name(&self) -> &'static str {
-                    match self {
-                        $(
-                            Self::$variant_ident { .. } => stringify!($variant_ident)
-                        ),*
-                    }
-                }
-            }
-
-            $(
-                #[derive(Debug)]
-                $(#[$variant_meta])*
-                $vis struct [<$variant_ident Event>] {
-                    $(
-                        $(#[$field_meta])*
-                        $vis $field_ident: $field_ty
-                    ),*
-                }
-            )*
-
-            $(
-                impl From<[<$variant_ident Event>]> for $ident {
-                    fn from(value: [<$variant_ident Event>]) -> Self {
-                        Self::$variant_ident(Box::new(value))
-                    }
-                }
-            )*
-
-            /// Provides a way to report events to the aggregator.
-            ///
-            /// Under the hood, this is a wrapper around an [`UnboundedSender`] which abstracts away
-            /// the fact that channels are used and that implements high-level methods for reporting
-            /// various events to the aggregator.
-            #[derive(Clone, Debug)]
-            pub struct [< $ident Reporter >]($vis tokio::sync::mpsc::UnboundedSender<$ident>);
-
-            impl From<tokio::sync::mpsc::UnboundedSender<$ident>> for [< $ident Reporter >] {
-                fn from(value: tokio::sync::mpsc::UnboundedSender<$ident>) -> Self {
-                    Self(value)
-                }
-            }
-
-            impl [< $ident Reporter >] {
-                pub fn test_specific_reporter(
-                    &self,
-                    test_specifier: impl Into<std::sync::Arc<crate::common::TestSpecifier>>
-                ) -> [< $ident TestSpecificReporter >] {
-                    [< $ident TestSpecificReporter >] {
-                        reporter: self.clone(),
-                        test_specifier: test_specifier.into(),
-                    }
-                }
-
-                fn report(&self, event: impl Into<$ident>) -> anyhow::Result<()> {
-                    self.0.send(event.into()).map_err(Into::into)
-                }
-
-                $(
-                    pub fn [< report_ $variant_ident:snake _event >](&self, $($field_ident: impl Into<$field_ty>),*) -> anyhow::Result<()> {
-                        self.report([< $variant_ident Event >] {
-                            $($field_ident: $field_ident.into()),*
-                        })
-                    }
-                )*
-            }
-
-            /// A reporter that's tied to a specific test case.
-            #[derive(Clone, Debug)]
-            pub struct [< $ident TestSpecificReporter >] {
-                $vis reporter: [< $ident Reporter >],
-                $vis test_specifier: std::sync::Arc<crate::common::TestSpecifier>,
-            }
-
-            impl [< $ident TestSpecificReporter >] {
-                pub fn execution_specific_reporter(
-                    &self,
-                    node_id: impl Into<usize>,
-                    platform_identifier: impl Into<PlatformIdentifier>
-                ) -> [< $ident ExecutionSpecificReporter >] {
-                    [< $ident ExecutionSpecificReporter >] {
-                        reporter: self.reporter.clone(),
-                        execution_specifier: Arc::new($crate::common::ExecutionSpecifier {
-                            test_specifier: self.test_specifier.clone(),
-                            node_id: node_id.into(),
-                            platform_identifier: platform_identifier.into(),
-                        })
-                    }
-                }
-
-                fn report(&self, event: impl Into<$ident>) -> anyhow::Result<()> {
-                    self.reporter.report(event)
-                }
-
-                $(
-                    __report_gen_for_variant! { $ident, $variant_ident; $( $field_ident : $field_ty ),* }
-                )*
-            }
-
-            /// A reporter that's tied to a specific execution of the test case such as execution on
-            /// a specific node from a specific platform.
-            #[derive(Clone, Debug)]
-            pub struct [< $ident ExecutionSpecificReporter >] {
-                $vis reporter: [< $ident Reporter >],
-                $vis execution_specifier: std::sync::Arc<$crate::common::ExecutionSpecifier>,
-            }
-
-            impl [< $ident ExecutionSpecificReporter >] {
-                fn report(&self, event: impl Into<$ident>) -> anyhow::Result<()> {
-                    self.reporter.report(event)
-                }
-
-                $(
-                    __report_gen_for_variant_exec! { $ident, $variant_ident; $( $field_ident : $field_ty ),* }
-                )*
-            }
-
-            /// A reporter that's tied to a specific step execution
-            #[derive(Clone, Debug)]
-            pub struct [< $ident StepExecutionSpecificReporter >] {
-                $vis reporter: [< $ident Reporter >],
-                $vis step_specifier: std::sync::Arc<$crate::common::StepExecutionSpecifier>,
-            }
-
-            impl [< $ident StepExecutionSpecificReporter >] {
-                fn report(&self, event: impl Into<$ident>) -> anyhow::Result<()> {
-                    self.reporter.report(event)
-                }
-
-                $(
-                    __report_gen_for_variant_step! { $ident, $variant_ident; $( $field_ident : $field_ty ),* }
-                )*
-            }
-        }
-    };
+#[derive(Debug)]
+pub(crate) struct ContractDeployedEvent {
+    pub execution_specifier: Arc<ExecutionSpecifier>,
+    pub contract_instance: ContractInstance,
+    pub address: Address,
 }
 
-define_event! {
-    /// An event type that's sent by the test runners/drivers to the report aggregator.
-    pub(crate) enum RunnerEvent {
-        /// An event emitted by the reporter when it wishes to listen to events emitted by the
-        /// aggregator.
-        SubscribeToEvents {
-            /// The channel that the aggregator is to send the receive side of the channel on.
-            tx: oneshot::Sender<broadcast::Receiver<ReporterEvent>>
-        },
-        /// An event emitted by runners when they've discovered a metadata file.
-        MetadataFileDiscovery {
-            /// The path of the metadata file discovered.
-            path: MetadataFilePath,
-            /// The content of the metadata file.
-            metadata: Metadata
-        },
-        /// An event emitted by the runners when they discover a test case.
-        TestCaseDiscovery {
-            /// A specifier for the test that was discovered.
-            test_specifier: Arc<TestSpecifier>,
-        },
-        /// An event emitted by the runners when a test case is ignored.
-        TestIgnored {
-            /// A specifier for the test that's been ignored.
-            test_specifier: Arc<TestSpecifier>,
-            /// A reason for the test to be ignored.
-            reason: String,
-            /// Additional fields that describe more information on why the test was ignored.
-            additional_fields: IndexMap<String, serde_json::Value>
-        },
-        /// An event emitted by the runners when a test case has succeeded.
-        TestSucceeded {
-            /// A specifier for the test that succeeded.
-            test_specifier: Arc<TestSpecifier>,
-            /// The number of steps of the case that were executed by the driver.
-            steps_executed: usize,
-        },
-        /// An event emitted by the runners when a test case has failed.
-        TestFailed {
-            /// A specifier for the test that succeeded.
-            test_specifier: Arc<TestSpecifier>,
-            /// A reason for the failure of the test.
-            reason: String,
-        },
-        /// An event emitted when the test case is assigned a platform node.
-        NodeAssigned {
-            /// A specifier for the test that the assignment is for.
-            test_specifier: Arc<TestSpecifier>,
-            /// The ID of the node that this case is being executed on.
-            id: usize,
-            /// The identifier of the platform used.
-            platform_identifier: PlatformIdentifier,
-            /// The connection string of the node.
-            connection_string: String,
-        },
-        /// An event emitted by the runners when the compilation of the contracts has succeeded
-        /// on the pre-link contracts.
-        PreLinkContractsCompilationSucceeded {
-            /// A specifier for the execution that's taking place.
-            execution_specifier: Arc<ExecutionSpecifier>,
-            /// The version of the compiler used to compile the contracts.
-            compiler_version: Version,
-            /// The path of the compiler used to compile the contracts.
-            compiler_path: PathBuf,
-            /// A flag of whether the contract bytecode and ABI were cached or if they were compiled
-            /// anew.
-            is_cached: bool,
-            /// The input provided to the compiler - this is optional and not provided if the
-            /// contracts were obtained from the cache.
-            compiler_input: Option<CompilerInput>,
-            /// The output of the compiler.
-            compiler_output: CompilerOutput
-        },
-        /// An event emitted by the runners when the compilation of the contracts has succeeded
-        /// on the post-link contracts.
-        PostLinkContractsCompilationSucceeded {
-            /// A specifier for the execution that's taking place.
-            execution_specifier: Arc<ExecutionSpecifier>,
-            /// The version of the compiler used to compile the contracts.
-            compiler_version: Version,
-            /// The path of the compiler used to compile the contracts.
-            compiler_path: PathBuf,
-            /// A flag of whether the contract bytecode and ABI were cached or if they were compiled
-            /// anew.
-            is_cached: bool,
-            /// The input provided to the compiler - this is optional and not provided if the
-            /// contracts were obtained from the cache.
-            compiler_input: Option<CompilerInput>,
-            /// The output of the compiler.
-            compiler_output: CompilerOutput
-        },
-        /// An event emitted by the runners when the compilation of the pre-link contract has
-        /// failed.
-        PreLinkContractsCompilationFailed {
-            /// A specifier for the execution that's taking place.
-            execution_specifier: Arc<ExecutionSpecifier>,
-            /// The version of the compiler used to compile the contracts.
-            compiler_version: Option<Version>,
-            /// The path of the compiler used to compile the contracts.
-            compiler_path: Option<PathBuf>,
-            /// The input provided to the compiler - this is optional and not provided if the
-            /// contracts were obtained from the cache.
-            compiler_input: Option<CompilerInput>,
-            /// The failure reason.
-            reason: String,
-        },
-        /// An event emitted by the runners when the compilation of the post-link contract has
-        /// failed.
-        PostLinkContractsCompilationFailed {
-            /// A specifier for the execution that's taking place.
-            execution_specifier: Arc<ExecutionSpecifier>,
-            /// The version of the compiler used to compile the contracts.
-            compiler_version: Option<Version>,
-            /// The path of the compiler used to compile the contracts.
-            compiler_path: Option<PathBuf>,
-            /// The input provided to the compiler - this is optional and not provided if the
-            /// contracts were obtained from the cache.
-            compiler_input: Option<CompilerInput>,
-            /// The failure reason.
-            reason: String,
-        },
-        /// An event emitted by the runners when a library has been deployed.
-        LibrariesDeployed {
-            /// A specifier for the execution that's taking place.
-            execution_specifier: Arc<ExecutionSpecifier>,
-            /// The addresses of the libraries that were deployed.
-            libraries: BTreeMap<ContractInstance, Address>
-        },
-        /// An event emitted by the runners when they've deployed a new contract.
-        ContractDeployed {
-            /// A specifier for the execution that's taking place.
-            execution_specifier: Arc<ExecutionSpecifier>,
-            /// The instance name of the contract.
-            contract_instance: ContractInstance,
-            /// The address of the contract.
-            address: Address
-        },
-        /// Reports the completion of the run.
-        Completion {},
+#[derive(Debug)]
+pub(crate) struct CompletionEvent {}
 
-        /* Benchmarks Events */
-        /// An event emitted with information on a transaction that was submitted for a certain step
-        /// of the execution.
-        StepTransactionInformation {
-            /// A specifier for the execution that's taking place.
-            execution_specifier: Arc<ExecutionSpecifier>,
-            /// The path of the step that this transaction belongs to.
-            step_path: StepPath,
-            /// Information about the transaction
-            transaction_information: TransactionInformation
-        },
-        ContractInformation {
-            /// A specifier for the execution that's taking place.
-            execution_specifier: Arc<ExecutionSpecifier>,
-            /// The path of the solidity source code that contains the contract.
-            source_code_path: PathBuf,
-            /// The name of the contract
-            contract_name: String,
-            /// The size of the contract
-            contract_size: usize
-        },
-        BlockMined {
-            /// A specifier for the execution that's taking place.
-            execution_specifier: Arc<ExecutionSpecifier>,
-            /// Information on the mined block,
-            mined_block_information: MinedBlockInformation
+#[derive(Debug)]
+pub(crate) struct StepTransactionInformationEvent {
+    pub execution_specifier: Arc<ExecutionSpecifier>,
+    pub step_path: StepPath,
+    pub transaction_information: TransactionInformation,
+}
+
+#[derive(Debug)]
+pub(crate) struct ContractInformationEvent {
+    pub execution_specifier: Arc<ExecutionSpecifier>,
+    pub source_code_path: PathBuf,
+    pub contract_name: String,
+    pub contract_size: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct BlockMinedEvent {
+    pub execution_specifier: Arc<ExecutionSpecifier>,
+    pub mined_block_information: MinedBlockInformation,
+}
+
+// ---------------------------------------------------------------------------
+// RunnerEvent enum
+// ---------------------------------------------------------------------------
+
+/// An event type that's sent by the test runners/drivers to the report aggregator.
+#[derive(Debug)]
+pub(crate) enum RunnerEvent {
+    SubscribeToEvents(Box<SubscribeToEventsEvent>),
+    MetadataFileDiscovery(Box<MetadataFileDiscoveryEvent>),
+    TestCaseDiscovery(Box<TestCaseDiscoveryEvent>),
+    TestIgnored(Box<TestIgnoredEvent>),
+    TestSucceeded(Box<TestSucceededEvent>),
+    TestFailed(Box<TestFailedEvent>),
+    NodeAssigned(Box<NodeAssignedEvent>),
+    PreLinkContractsCompilationSucceeded(Box<PreLinkContractsCompilationSucceededEvent>),
+    PostLinkContractsCompilationSucceeded(Box<PostLinkContractsCompilationSucceededEvent>),
+    PreLinkContractsCompilationFailed(Box<PreLinkContractsCompilationFailedEvent>),
+    PostLinkContractsCompilationFailed(Box<PostLinkContractsCompilationFailedEvent>),
+    LibrariesDeployed(Box<LibrariesDeployedEvent>),
+    ContractDeployed(Box<ContractDeployedEvent>),
+    Completion(Box<CompletionEvent>),
+    StepTransactionInformation(Box<StepTransactionInformationEvent>),
+    ContractInformation(Box<ContractInformationEvent>),
+    BlockMined(Box<BlockMinedEvent>),
+}
+
+impl RunnerEvent {
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::SubscribeToEvents { .. } => "SubscribeToEvents",
+            Self::MetadataFileDiscovery { .. } => "MetadataFileDiscovery",
+            Self::TestCaseDiscovery { .. } => "TestCaseDiscovery",
+            Self::TestIgnored { .. } => "TestIgnored",
+            Self::TestSucceeded { .. } => "TestSucceeded",
+            Self::TestFailed { .. } => "TestFailed",
+            Self::NodeAssigned { .. } => "NodeAssigned",
+            Self::PreLinkContractsCompilationSucceeded { .. } => {
+                "PreLinkContractsCompilationSucceeded"
+            }
+            Self::PostLinkContractsCompilationSucceeded { .. } => {
+                "PostLinkContractsCompilationSucceeded"
+            }
+            Self::PreLinkContractsCompilationFailed { .. } => "PreLinkContractsCompilationFailed",
+            Self::PostLinkContractsCompilationFailed { .. } => "PostLinkContractsCompilationFailed",
+            Self::LibrariesDeployed { .. } => "LibrariesDeployed",
+            Self::ContractDeployed { .. } => "ContractDeployed",
+            Self::Completion { .. } => "Completion",
+            Self::StepTransactionInformation { .. } => "StepTransactionInformation",
+            Self::ContractInformation { .. } => "ContractInformation",
+            Self::BlockMined { .. } => "BlockMined",
         }
     }
 }
 
-/// An extension to the [`Reporter`] implemented by the macro.
+// ---------------------------------------------------------------------------
+// From impls (event struct → RunnerEvent)
+// ---------------------------------------------------------------------------
+
+macro_rules! impl_from_event {
+    ($event:ident, $variant:ident) => {
+        impl From<$event> for RunnerEvent {
+            fn from(value: $event) -> Self {
+                Self::$variant(Box::new(value))
+            }
+        }
+    };
+}
+
+impl_from_event!(SubscribeToEventsEvent, SubscribeToEvents);
+impl_from_event!(MetadataFileDiscoveryEvent, MetadataFileDiscovery);
+impl_from_event!(TestCaseDiscoveryEvent, TestCaseDiscovery);
+impl_from_event!(TestIgnoredEvent, TestIgnored);
+impl_from_event!(TestSucceededEvent, TestSucceeded);
+impl_from_event!(TestFailedEvent, TestFailed);
+impl_from_event!(NodeAssignedEvent, NodeAssigned);
+impl_from_event!(
+    PreLinkContractsCompilationSucceededEvent,
+    PreLinkContractsCompilationSucceeded
+);
+impl_from_event!(
+    PostLinkContractsCompilationSucceededEvent,
+    PostLinkContractsCompilationSucceeded
+);
+impl_from_event!(
+    PreLinkContractsCompilationFailedEvent,
+    PreLinkContractsCompilationFailed
+);
+impl_from_event!(
+    PostLinkContractsCompilationFailedEvent,
+    PostLinkContractsCompilationFailed
+);
+impl_from_event!(LibrariesDeployedEvent, LibrariesDeployed);
+impl_from_event!(ContractDeployedEvent, ContractDeployed);
+impl_from_event!(CompletionEvent, Completion);
+impl_from_event!(StepTransactionInformationEvent, StepTransactionInformation);
+impl_from_event!(ContractInformationEvent, ContractInformation);
+impl_from_event!(BlockMinedEvent, BlockMined);
+
+// ---------------------------------------------------------------------------
+// RunnerEventReporter — root reporter with methods for all events
+// ---------------------------------------------------------------------------
+
+/// Provides a way to report events to the aggregator.
+///
+/// Under the hood, this is a wrapper around an [`UnboundedSender`] which abstracts away
+/// the fact that channels are used and that implements high-level methods for reporting
+/// various events to the aggregator.
+#[derive(Clone, Debug)]
+pub struct RunnerEventReporter(pub(crate) UnboundedSender<RunnerEvent>);
+
+impl From<UnboundedSender<RunnerEvent>> for RunnerEventReporter {
+    fn from(value: UnboundedSender<RunnerEvent>) -> Self {
+        Self(value)
+    }
+}
+
 impl RunnerEventReporter {
+    fn report(&self, event: impl Into<RunnerEvent>) -> anyhow::Result<()> {
+        self.0.send(event.into()).map_err(Into::into)
+    }
+
+    pub fn test_specific_reporter(
+        &self,
+        test_specifier: impl Into<Arc<TestSpecifier>>,
+    ) -> RunnerEventTestSpecificReporter {
+        RunnerEventTestSpecificReporter {
+            reporter: self.clone(),
+            test_specifier: test_specifier.into(),
+        }
+    }
+
+    pub fn report_subscribe_to_events_event(
+        &self,
+        tx: impl Into<oneshot::Sender<broadcast::Receiver<ReporterEvent>>>,
+    ) -> anyhow::Result<()> {
+        self.report(SubscribeToEventsEvent { tx: tx.into() })
+    }
+
+    pub fn report_metadata_file_discovery_event(
+        &self,
+        path: impl Into<MetadataFilePath>,
+        metadata: impl Into<Metadata>,
+    ) -> anyhow::Result<()> {
+        self.report(MetadataFileDiscoveryEvent {
+            path: path.into(),
+            metadata: metadata.into(),
+        })
+    }
+
+    pub fn report_test_case_discovery_event(
+        &self,
+        test_specifier: impl Into<Arc<TestSpecifier>>,
+    ) -> anyhow::Result<()> {
+        self.report(TestCaseDiscoveryEvent {
+            test_specifier: test_specifier.into(),
+        })
+    }
+
+    pub fn report_test_ignored_event(
+        &self,
+        test_specifier: impl Into<Arc<TestSpecifier>>,
+        reason: impl Into<String>,
+        additional_fields: impl Into<IndexMap<String, serde_json::Value>>,
+    ) -> anyhow::Result<()> {
+        self.report(TestIgnoredEvent {
+            test_specifier: test_specifier.into(),
+            reason: reason.into(),
+            additional_fields: additional_fields.into(),
+        })
+    }
+
+    pub fn report_test_succeeded_event(
+        &self,
+        test_specifier: impl Into<Arc<TestSpecifier>>,
+        steps_executed: impl Into<usize>,
+    ) -> anyhow::Result<()> {
+        self.report(TestSucceededEvent {
+            test_specifier: test_specifier.into(),
+            steps_executed: steps_executed.into(),
+        })
+    }
+
+    pub fn report_test_failed_event(
+        &self,
+        test_specifier: impl Into<Arc<TestSpecifier>>,
+        reason: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        self.report(TestFailedEvent {
+            test_specifier: test_specifier.into(),
+            reason: reason.into(),
+        })
+    }
+
+    pub fn report_node_assigned_event(
+        &self,
+        test_specifier: impl Into<Arc<TestSpecifier>>,
+        id: impl Into<usize>,
+        platform_identifier: impl Into<PlatformIdentifier>,
+        connection_string: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        self.report(NodeAssignedEvent {
+            test_specifier: test_specifier.into(),
+            id: id.into(),
+            platform_identifier: platform_identifier.into(),
+            connection_string: connection_string.into(),
+        })
+    }
+
+    pub fn report_pre_link_contracts_compilation_succeeded_event(
+        &self,
+        execution_specifier: impl Into<Arc<ExecutionSpecifier>>,
+        compiler_version: impl Into<Version>,
+        compiler_path: impl Into<PathBuf>,
+        is_cached: impl Into<bool>,
+        compiler_input: impl Into<Option<CompilerInput>>,
+        compiler_output: impl Into<CompilerOutput>,
+    ) -> anyhow::Result<()> {
+        self.report(PreLinkContractsCompilationSucceededEvent {
+            execution_specifier: execution_specifier.into(),
+            compiler_version: compiler_version.into(),
+            compiler_path: compiler_path.into(),
+            is_cached: is_cached.into(),
+            compiler_input: compiler_input.into(),
+            compiler_output: compiler_output.into(),
+        })
+    }
+
+    pub fn report_post_link_contracts_compilation_succeeded_event(
+        &self,
+        execution_specifier: impl Into<Arc<ExecutionSpecifier>>,
+        compiler_version: impl Into<Version>,
+        compiler_path: impl Into<PathBuf>,
+        is_cached: impl Into<bool>,
+        compiler_input: impl Into<Option<CompilerInput>>,
+        compiler_output: impl Into<CompilerOutput>,
+    ) -> anyhow::Result<()> {
+        self.report(PostLinkContractsCompilationSucceededEvent {
+            execution_specifier: execution_specifier.into(),
+            compiler_version: compiler_version.into(),
+            compiler_path: compiler_path.into(),
+            is_cached: is_cached.into(),
+            compiler_input: compiler_input.into(),
+            compiler_output: compiler_output.into(),
+        })
+    }
+
+    pub fn report_pre_link_contracts_compilation_failed_event(
+        &self,
+        execution_specifier: impl Into<Arc<ExecutionSpecifier>>,
+        compiler_version: impl Into<Option<Version>>,
+        compiler_path: impl Into<Option<PathBuf>>,
+        compiler_input: impl Into<Option<CompilerInput>>,
+        reason: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        self.report(PreLinkContractsCompilationFailedEvent {
+            execution_specifier: execution_specifier.into(),
+            compiler_version: compiler_version.into(),
+            compiler_path: compiler_path.into(),
+            compiler_input: compiler_input.into(),
+            reason: reason.into(),
+        })
+    }
+
+    pub fn report_post_link_contracts_compilation_failed_event(
+        &self,
+        execution_specifier: impl Into<Arc<ExecutionSpecifier>>,
+        compiler_version: impl Into<Option<Version>>,
+        compiler_path: impl Into<Option<PathBuf>>,
+        compiler_input: impl Into<Option<CompilerInput>>,
+        reason: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        self.report(PostLinkContractsCompilationFailedEvent {
+            execution_specifier: execution_specifier.into(),
+            compiler_version: compiler_version.into(),
+            compiler_path: compiler_path.into(),
+            compiler_input: compiler_input.into(),
+            reason: reason.into(),
+        })
+    }
+
+    pub fn report_libraries_deployed_event(
+        &self,
+        execution_specifier: impl Into<Arc<ExecutionSpecifier>>,
+        libraries: impl Into<BTreeMap<ContractInstance, Address>>,
+    ) -> anyhow::Result<()> {
+        self.report(LibrariesDeployedEvent {
+            execution_specifier: execution_specifier.into(),
+            libraries: libraries.into(),
+        })
+    }
+
+    pub fn report_contract_deployed_event(
+        &self,
+        execution_specifier: impl Into<Arc<ExecutionSpecifier>>,
+        contract_instance: impl Into<ContractInstance>,
+        address: impl Into<Address>,
+    ) -> anyhow::Result<()> {
+        self.report(ContractDeployedEvent {
+            execution_specifier: execution_specifier.into(),
+            contract_instance: contract_instance.into(),
+            address: address.into(),
+        })
+    }
+
+    pub fn report_completion_event(&self) -> anyhow::Result<()> {
+        self.report(CompletionEvent {})
+    }
+
+    pub fn report_step_transaction_information_event(
+        &self,
+        execution_specifier: impl Into<Arc<ExecutionSpecifier>>,
+        step_path: impl Into<StepPath>,
+        transaction_information: impl Into<TransactionInformation>,
+    ) -> anyhow::Result<()> {
+        self.report(StepTransactionInformationEvent {
+            execution_specifier: execution_specifier.into(),
+            step_path: step_path.into(),
+            transaction_information: transaction_information.into(),
+        })
+    }
+
+    pub fn report_contract_information_event(
+        &self,
+        execution_specifier: impl Into<Arc<ExecutionSpecifier>>,
+        source_code_path: impl Into<PathBuf>,
+        contract_name: impl Into<String>,
+        contract_size: impl Into<usize>,
+    ) -> anyhow::Result<()> {
+        self.report(ContractInformationEvent {
+            execution_specifier: execution_specifier.into(),
+            source_code_path: source_code_path.into(),
+            contract_name: contract_name.into(),
+            contract_size: contract_size.into(),
+        })
+    }
+
+    pub fn report_block_mined_event(
+        &self,
+        execution_specifier: impl Into<Arc<ExecutionSpecifier>>,
+        mined_block_information: impl Into<MinedBlockInformation>,
+    ) -> anyhow::Result<()> {
+        self.report(BlockMinedEvent {
+            execution_specifier: execution_specifier.into(),
+            mined_block_information: mined_block_information.into(),
+        })
+    }
+
     pub async fn subscribe(&self) -> anyhow::Result<broadcast::Receiver<ReporterEvent>> {
         let (tx, rx) = oneshot::channel::<broadcast::Receiver<ReporterEvent>>();
         self.report_subscribe_to_events_event(tx)
@@ -663,6 +494,252 @@ impl RunnerEventReporter {
         rx.await.map_err(Into::into)
     }
 }
+
+// ---------------------------------------------------------------------------
+// RunnerEventTestSpecificReporter — auto-fills test_specifier
+// ---------------------------------------------------------------------------
+
+/// A reporter that's tied to a specific test case.
+#[derive(Clone, Debug)]
+pub struct RunnerEventTestSpecificReporter {
+    pub(crate) reporter: RunnerEventReporter,
+    pub(crate) test_specifier: Arc<TestSpecifier>,
+}
+
+impl RunnerEventTestSpecificReporter {
+    pub fn execution_specific_reporter(
+        &self,
+        node_id: impl Into<usize>,
+        platform_identifier: impl Into<PlatformIdentifier>,
+    ) -> RunnerEventExecutionSpecificReporter {
+        RunnerEventExecutionSpecificReporter {
+            reporter: self.reporter.clone(),
+            execution_specifier: Arc::new(ExecutionSpecifier {
+                test_specifier: self.test_specifier.clone(),
+                node_id: node_id.into(),
+                platform_identifier: platform_identifier.into(),
+            }),
+        }
+    }
+
+    fn report(&self, event: impl Into<RunnerEvent>) -> anyhow::Result<()> {
+        self.reporter.report(event)
+    }
+
+    pub fn report_test_case_discovery_event(&self) -> anyhow::Result<()> {
+        self.report(TestCaseDiscoveryEvent {
+            test_specifier: self.test_specifier.clone(),
+        })
+    }
+
+    pub fn report_test_ignored_event(
+        &self,
+        reason: impl Into<String>,
+        additional_fields: impl Into<IndexMap<String, serde_json::Value>>,
+    ) -> anyhow::Result<()> {
+        self.report(TestIgnoredEvent {
+            test_specifier: self.test_specifier.clone(),
+            reason: reason.into(),
+            additional_fields: additional_fields.into(),
+        })
+    }
+
+    pub fn report_test_succeeded_event(
+        &self,
+        steps_executed: impl Into<usize>,
+    ) -> anyhow::Result<()> {
+        self.report(TestSucceededEvent {
+            test_specifier: self.test_specifier.clone(),
+            steps_executed: steps_executed.into(),
+        })
+    }
+
+    pub fn report_test_failed_event(&self, reason: impl Into<String>) -> anyhow::Result<()> {
+        self.report(TestFailedEvent {
+            test_specifier: self.test_specifier.clone(),
+            reason: reason.into(),
+        })
+    }
+
+    pub fn report_node_assigned_event(
+        &self,
+        id: impl Into<usize>,
+        platform_identifier: impl Into<PlatformIdentifier>,
+        connection_string: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        self.report(NodeAssignedEvent {
+            test_specifier: self.test_specifier.clone(),
+            id: id.into(),
+            platform_identifier: platform_identifier.into(),
+            connection_string: connection_string.into(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RunnerEventExecutionSpecificReporter — auto-fills execution_specifier
+// ---------------------------------------------------------------------------
+
+/// A reporter that's tied to a specific execution of the test case such as execution on
+/// a specific node from a specific platform.
+#[derive(Clone, Debug)]
+pub struct RunnerEventExecutionSpecificReporter {
+    pub(crate) reporter: RunnerEventReporter,
+    pub(crate) execution_specifier: Arc<ExecutionSpecifier>,
+}
+
+impl RunnerEventExecutionSpecificReporter {
+    fn report(&self, event: impl Into<RunnerEvent>) -> anyhow::Result<()> {
+        self.reporter.report(event)
+    }
+
+    pub fn report_pre_link_contracts_compilation_succeeded_event(
+        &self,
+        compiler_version: impl Into<Version>,
+        compiler_path: impl Into<PathBuf>,
+        is_cached: impl Into<bool>,
+        compiler_input: impl Into<Option<CompilerInput>>,
+        compiler_output: impl Into<CompilerOutput>,
+    ) -> anyhow::Result<()> {
+        self.report(PreLinkContractsCompilationSucceededEvent {
+            execution_specifier: self.execution_specifier.clone(),
+            compiler_version: compiler_version.into(),
+            compiler_path: compiler_path.into(),
+            is_cached: is_cached.into(),
+            compiler_input: compiler_input.into(),
+            compiler_output: compiler_output.into(),
+        })
+    }
+
+    pub fn report_post_link_contracts_compilation_succeeded_event(
+        &self,
+        compiler_version: impl Into<Version>,
+        compiler_path: impl Into<PathBuf>,
+        is_cached: impl Into<bool>,
+        compiler_input: impl Into<Option<CompilerInput>>,
+        compiler_output: impl Into<CompilerOutput>,
+    ) -> anyhow::Result<()> {
+        self.report(PostLinkContractsCompilationSucceededEvent {
+            execution_specifier: self.execution_specifier.clone(),
+            compiler_version: compiler_version.into(),
+            compiler_path: compiler_path.into(),
+            is_cached: is_cached.into(),
+            compiler_input: compiler_input.into(),
+            compiler_output: compiler_output.into(),
+        })
+    }
+
+    pub fn report_pre_link_contracts_compilation_failed_event(
+        &self,
+        compiler_version: impl Into<Option<Version>>,
+        compiler_path: impl Into<Option<PathBuf>>,
+        compiler_input: impl Into<Option<CompilerInput>>,
+        reason: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        self.report(PreLinkContractsCompilationFailedEvent {
+            execution_specifier: self.execution_specifier.clone(),
+            compiler_version: compiler_version.into(),
+            compiler_path: compiler_path.into(),
+            compiler_input: compiler_input.into(),
+            reason: reason.into(),
+        })
+    }
+
+    pub fn report_post_link_contracts_compilation_failed_event(
+        &self,
+        compiler_version: impl Into<Option<Version>>,
+        compiler_path: impl Into<Option<PathBuf>>,
+        compiler_input: impl Into<Option<CompilerInput>>,
+        reason: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        self.report(PostLinkContractsCompilationFailedEvent {
+            execution_specifier: self.execution_specifier.clone(),
+            compiler_version: compiler_version.into(),
+            compiler_path: compiler_path.into(),
+            compiler_input: compiler_input.into(),
+            reason: reason.into(),
+        })
+    }
+
+    pub fn report_libraries_deployed_event(
+        &self,
+        libraries: impl Into<BTreeMap<ContractInstance, Address>>,
+    ) -> anyhow::Result<()> {
+        self.report(LibrariesDeployedEvent {
+            execution_specifier: self.execution_specifier.clone(),
+            libraries: libraries.into(),
+        })
+    }
+
+    pub fn report_contract_deployed_event(
+        &self,
+        contract_instance: impl Into<ContractInstance>,
+        address: impl Into<Address>,
+    ) -> anyhow::Result<()> {
+        self.report(ContractDeployedEvent {
+            execution_specifier: self.execution_specifier.clone(),
+            contract_instance: contract_instance.into(),
+            address: address.into(),
+        })
+    }
+
+    pub fn report_step_transaction_information_event(
+        &self,
+        step_path: impl Into<StepPath>,
+        transaction_information: impl Into<TransactionInformation>,
+    ) -> anyhow::Result<()> {
+        self.report(StepTransactionInformationEvent {
+            execution_specifier: self.execution_specifier.clone(),
+            step_path: step_path.into(),
+            transaction_information: transaction_information.into(),
+        })
+    }
+
+    pub fn report_contract_information_event(
+        &self,
+        source_code_path: impl Into<PathBuf>,
+        contract_name: impl Into<String>,
+        contract_size: impl Into<usize>,
+    ) -> anyhow::Result<()> {
+        self.report(ContractInformationEvent {
+            execution_specifier: self.execution_specifier.clone(),
+            source_code_path: source_code_path.into(),
+            contract_name: contract_name.into(),
+            contract_size: contract_size.into(),
+        })
+    }
+
+    pub fn report_block_mined_event(
+        &self,
+        mined_block_information: impl Into<MinedBlockInformation>,
+    ) -> anyhow::Result<()> {
+        self.report(BlockMinedEvent {
+            execution_specifier: self.execution_specifier.clone(),
+            mined_block_information: mined_block_information.into(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RunnerEventStepExecutionSpecificReporter — auto-fills step_specifier
+// ---------------------------------------------------------------------------
+
+/// A reporter that's tied to a specific step execution.
+#[derive(Clone, Debug)]
+pub struct RunnerEventStepExecutionSpecificReporter {
+    pub(crate) reporter: RunnerEventReporter,
+    pub(crate) step_specifier: Arc<crate::common::StepExecutionSpecifier>,
+}
+
+impl RunnerEventStepExecutionSpecificReporter {
+    fn report(&self, event: impl Into<RunnerEvent>) -> anyhow::Result<()> {
+        self.reporter.report(event)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type aliases for convenience
+// ---------------------------------------------------------------------------
 
 pub type Reporter = RunnerEventReporter;
 pub type TestSpecificReporter = RunnerEventTestSpecificReporter;
