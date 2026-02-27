@@ -143,7 +143,7 @@ impl SolidityCompiler for Resolc {
             // resolc. So, we need to go back to this later once it's supported.
             revert_string_handling: _,
         }: CompilerInput,
-    ) -> Pin<Box<dyn Future<Output = Result<CompilerOutput>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<CompilerOutput>> + Send + '_>> {
         Box::pin(async move {
             if !matches!(pipeline, None | Some(ModePipeline::ViaYulIR)) {
                 anyhow::bail!(

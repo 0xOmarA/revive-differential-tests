@@ -1,6 +1,9 @@
 //! This crate implements concurrent handling of testing node.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use anyhow::Context as _;
 use revive_dt_config::*;
@@ -11,7 +14,7 @@ use revive_dt_node_interaction::EthereumNode;
 /// in a round robbin fashion.
 pub struct NodePool {
     next: AtomicUsize,
-    nodes: Vec<Box<dyn EthereumNode + Send + Sync>>,
+    nodes: Vec<Arc<dyn EthereumNode>>,
 }
 
 impl NodePool {
@@ -26,7 +29,7 @@ impl NodePool {
             handles.push(platform.new_node(context)?);
         }
 
-        let mut nodes = Vec::with_capacity(nodes);
+        let mut nodes: Vec<Box<dyn EthereumNode>> = Vec::with_capacity(nodes);
         for handle in handles {
             nodes.push(
                 handle
@@ -46,14 +49,14 @@ impl NodePool {
             .context("Failed to run the pre-transactions task")?;
 
         Ok(Self {
-            nodes,
+            nodes: nodes.into_iter().map(Arc::from).collect(),
             next: Default::default(),
         })
     }
 
     /// Get a handle to the next node.
-    pub fn round_robbin(&self) -> &dyn EthereumNode {
+    pub fn round_robbin(&self) -> Arc<dyn EthereumNode> {
         let current = self.next.fetch_add(1, Ordering::SeqCst) % self.nodes.len();
-        self.nodes.get(current).unwrap().as_ref()
+        self.nodes.get(current).unwrap().clone()
     }
 }

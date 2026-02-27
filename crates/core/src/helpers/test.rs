@@ -1,6 +1,6 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::{borrow::Cow, path::Path};
 
 use anyhow::Context as _;
 use futures::{Stream, StreamExt, stream};
@@ -26,14 +26,12 @@ use crate::Platform;
 use crate::helpers::NodePool;
 
 pub async fn create_test_definitions_stream<'a>(
-    // This is only required for creating the compiler objects and is not used anywhere else in the
-    // function.
-    context: &Context,
+    context: &'a Context,
     corpus: &'a Corpus,
-    platforms_and_nodes: &'a BTreeMap<PlatformIdentifier, (&dyn Platform, NodePool)>,
-    test_case_ignore_configuration: &TestCaseIgnoreResolvedConfiguration,
+    platforms_and_nodes: &'a BTreeMap<PlatformIdentifier, (Arc<dyn Platform>, NodePool)>,
+    test_case_ignore_configuration: &'a TestCaseIgnoreResolvedConfiguration,
     reporter: Reporter,
-) -> impl Stream<Item = TestDefinition<'a>> {
+) -> impl Stream<Item = TestDefinition> + 'a {
     let cloned_reporter = reporter.clone();
     stream::iter(
         corpus
@@ -49,13 +47,15 @@ pub async fn create_test_definitions_stream<'a>(
             .map(move |(metadata_file, case_idx, case, mode)| {
                 let reporter = reporter.clone();
 
+                let solc_mode = mode.as_ref().clone();
+                let owned_mode = mode.into_owned();
                 (
-                    metadata_file,
+                    metadata_file.clone(),
                     case_idx,
-                    case,
-                    mode.clone(),
+                    case.clone(),
+                    owned_mode,
                     reporter.test_specific_reporter(Arc::new(TestSpecifier {
-                        solc_mode: mode.as_ref().clone(),
+                        solc_mode,
                         metadata_file_path: metadata_file.metadata_file_path.clone(),
                         case_idx: CaseIdx::new(case_idx),
                     })),
@@ -100,9 +100,9 @@ pub async fn create_test_definitions_stream<'a>(
                 platforms.insert(
                     platform.platform_identifier(),
                     TestPlatformInformation {
-                        platform: *platform,
+                        platform: platform.clone(),
                         node,
-                        compiler,
+                        compiler: Arc::from(compiler),
                         reporter,
                     },
                 );
@@ -110,11 +110,11 @@ pub async fn create_test_definitions_stream<'a>(
 
             Some(TestDefinition {
                 /* Metadata file information */
+                metadata_file_path: metadata_file.metadata_file_path.clone(),
                 metadata: metadata_file,
-                metadata_file_path: metadata_file.metadata_file_path.as_path(),
 
                 /* Mode Information */
-                mode: mode.clone(),
+                mode,
 
                 /* Case Information */
                 case_idx: CaseIdx::new(case_idx),
@@ -230,26 +230,26 @@ impl TryFrom<IgnoreCasesConfiguration> for TestCaseIgnoreResolvedConfiguration {
 /// specific case to be tested, the platforms that the tests should run on, the specific nodes of
 /// these platforms that they should run on, the compilers to use, and everything else needed making
 /// it a complete description.
-pub struct TestDefinition<'a> {
+pub struct TestDefinition {
     /* Metadata file information */
-    pub metadata: &'a MetadataFile,
-    pub metadata_file_path: &'a Path,
+    pub metadata: MetadataFile,
+    pub metadata_file_path: std::path::PathBuf,
 
     /* Mode Information */
-    pub mode: Cow<'a, Mode>,
+    pub mode: Mode,
 
     /* Case Information */
     pub case_idx: CaseIdx,
-    pub case: &'a Case,
+    pub case: Case,
 
     /* Platform and Node Assignment Information */
-    pub platforms: BTreeMap<PlatformIdentifier, TestPlatformInformation<'a>>,
+    pub platforms: BTreeMap<PlatformIdentifier, TestPlatformInformation>,
 
     /* Reporter */
     pub reporter: TestSpecificReporter,
 }
 
-impl<'a> TestDefinition<'a> {
+impl TestDefinition {
     /// Checks if this test can be ran with the current configuration.
     pub fn check_compatibility(
         &self,
@@ -266,7 +266,7 @@ impl<'a> TestDefinition<'a> {
 
     /// Checks if the metadata file is ignored or not.
     fn check_metadata_file_ignored(&self) -> TestCheckFunctionResult {
-        if self.metadata.ignore.is_some_and(|ignore| ignore) {
+        if self.metadata.content.ignore.is_some_and(|ignore| ignore) {
             Err(("Metadata file is ignored.", indexmap! {}))
         } else {
             Ok(())
@@ -289,7 +289,7 @@ impl<'a> TestDefinition<'a> {
             .case
             .targets
             .as_ref()
-            .or(self.metadata.targets.as_ref())
+            .or(self.metadata.content.targets.as_ref())
         else {
             return Ok(());
         };
@@ -321,12 +321,12 @@ impl<'a> TestDefinition<'a> {
 
     // Checks for the compatibility of the EVM version with the platforms specified.
     fn check_evm_version_compatibility(&self) -> TestCheckFunctionResult {
-        let Some(evm_version_requirement) = self.metadata.required_evm_version else {
+        let Some(evm_version_requirement) = self.metadata.content.required_evm_version else {
             return Ok(());
         };
 
         let mut error_map = indexmap! {
-            "test_desired_evm_version" => json!(self.metadata.required_evm_version),
+            "test_desired_evm_version" => json!(self.metadata.content.required_evm_version),
         };
         let mut is_allowed = true;
         for (_, platform_information) in self.platforms.iter() {
@@ -352,7 +352,7 @@ impl<'a> TestDefinition<'a> {
     /// Checks if the platforms compilers support the mode that the test is for.
     fn check_compiler_compatibility(&self) -> TestCheckFunctionResult {
         let mut error_map = indexmap! {
-            "test_desired_evm_version" => json!(self.metadata.required_evm_version),
+            "test_desired_evm_version" => json!(self.metadata.content.required_evm_version),
         };
         let mut is_allowed = true;
         for (_, platform_information) in self.platforms.iter() {
@@ -401,9 +401,9 @@ impl<'a> TestDefinition<'a> {
         ) {
             let test_case_status = report
                 .execution_information
-                .get(&(self.metadata_file_path.to_path_buf().into()))
+                .get(&(self.metadata_file_path.clone().into()))
                 .and_then(|obj| obj.case_reports.get(&self.case_idx))
-                .and_then(|obj| obj.mode_execution_reports.get(&self.mode))
+                .and_then(|obj| obj.mode_execution_reports.get(&Cow::Borrowed(&self.mode)))
                 .and_then(|obj| obj.status.as_ref());
 
             match test_case_status {
@@ -424,10 +424,11 @@ impl<'a> TestDefinition<'a> {
     }
 }
 
-pub struct TestPlatformInformation<'a> {
-    pub platform: &'a dyn Platform,
-    pub node: &'a dyn EthereumNode,
-    pub compiler: Box<dyn SolidityCompiler>,
+#[derive(Clone)]
+pub struct TestPlatformInformation {
+    pub platform: Arc<dyn Platform>,
+    pub node: Arc<dyn EthereumNode>,
+    pub compiler: Arc<dyn SolidityCompiler>,
     pub reporter: ExecutionSpecificReporter,
 }
 

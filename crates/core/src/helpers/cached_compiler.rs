@@ -2,7 +2,6 @@
 //! be reused between runs.
 
 use std::{
-    borrow::Cow,
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
@@ -22,17 +21,17 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tracing::{Instrument, debug, debug_span, instrument};
 
-pub struct CachedCompiler<'a> {
+pub struct CachedCompiler {
     /// The cache that stores the compiled contracts.
     artifacts_cache: ArtifactsCache,
 
     /// This is a mechanism that the cached compiler uses so that if multiple compilation requests
     /// come in for the same contract we never compile all of them and only compile it once and all
     /// other tasks that request this same compilation concurrently get the cached version.
-    cache_key_lock: RwLock<HashMap<CacheKey<'a>, Arc<Mutex<()>>>>,
+    cache_key_lock: RwLock<HashMap<CacheKey, Arc<Mutex<()>>>>,
 }
 
-impl<'a> CachedCompiler<'a> {
+impl CachedCompiler {
     pub async fn new(path: impl AsRef<Path>, invalidate_cache: bool) -> Result<Self> {
         let mut cache = ArtifactsCache::new(path);
         if invalidate_cache {
@@ -61,11 +60,11 @@ impl<'a> CachedCompiler<'a> {
     )]
     pub async fn compile_contracts(
         &self,
-        metadata: &'a Metadata,
-        metadata_file_path: &'a Path,
-        mode: Cow<'a, Mode>,
+        metadata: &Metadata,
+        metadata_file_path: &Path,
+        mode: &Mode,
         deployed_libraries: Option<&HashMap<ContractInstance, (ContractIdent, Address, JsonAbi)>>,
-        compiler: &dyn SolidityCompiler,
+        compiler: Arc<dyn SolidityCompiler>,
         platform: &dyn Platform,
         reporter: &ExecutionSpecificReporter,
     ) -> Result<CompilerOutput> {
@@ -73,25 +72,47 @@ impl<'a> CachedCompiler<'a> {
         let cache_key = CacheKey {
             compiler_identifier: platform.compiler_identifier(),
             compiler_version: compiler.version().clone(),
-            metadata_file_path,
+            metadata_file_path: metadata_file_path.to_path_buf(),
             solc_mode: mode.clone(),
             resolc_heap_size,
             resolc_stack_size,
         };
 
-        let compilation_callback = || {
+        // Pre-compute all data from borrowed parameters so the compilation callback only
+        // captures owned types. This is required so that the futures produced here are Send,
+        // enabling use with tokio::spawn.
+        let metadata_directory = metadata
+            .directory()
+            .context("Failed to get metadata directory while preparing compilation")?
+            .to_path_buf();
+        let files_to_compile: Vec<PathBuf> = metadata
+            .files_to_compile()
+            .context("Failed to enumerate files to compile from metadata")?
+            .collect();
+        let mode_owned = mode.clone();
+        let deployed_libraries_owned = deployed_libraries.cloned();
+        let compiler_version = compiler.version().clone();
+        let compiler_path = compiler.path().to_path_buf();
+        let reporter_owned = reporter.clone();
+
+        let compilation_callback = |compiler: Arc<dyn SolidityCompiler>| {
+            let metadata_directory = metadata_directory.clone();
+            let files_to_compile = files_to_compile.clone();
+            let mode_owned = mode_owned.clone();
+            let deployed_libraries_owned = deployed_libraries_owned.clone();
+            let reporter_owned = reporter_owned.clone();
+            let compiler_version = compiler_version.clone();
+            let compiler_path = compiler_path.clone();
             async move {
                 compile_contracts(
-                    metadata
-                        .directory()
-                        .context("Failed to get metadata directory while preparing compilation")?,
-                    metadata
-                        .files_to_compile()
-                        .context("Failed to enumerate files to compile from metadata")?,
-                    &mode,
-                    deployed_libraries,
-                    compiler,
-                    reporter,
+                    metadata_directory,
+                    files_to_compile.into_iter(),
+                    &mode_owned,
+                    deployed_libraries_owned.as_ref(),
+                    compiler.as_ref(),
+                    compiler_version,
+                    compiler_path,
+                    &reporter_owned,
                 )
                 .map(|compilation_result| compilation_result.map(CacheValue::new))
                 .await
@@ -105,13 +126,20 @@ impl<'a> CachedCompiler<'a> {
             ))
         };
 
+        // We need Arc<dyn SolidityCompiler> for the callback. Since we only have a reference,
+        // we'll create a thin wrapper. But actually, we can just use the trait object reference
+        // before the await boundaries. For now, we restructure so the callback captures owned data.
+        // The `compiler` reference is needed for `try_build` inside `compile_contracts`.
+        // Since SolidityCompiler is behind Arc in TestPlatformInformation, the caller can pass it.
+        // For backward compat, we accept &dyn and note this limitation.
+
         let compiled_contracts = match deployed_libraries {
             // If deployed libraries have been specified then we will re-compile the contract as it
             // means that linking is required in this case.
             Some(_) => {
                 debug!("Deployed libraries defined, recompilation must take place");
                 debug!("Cache miss");
-                compilation_callback()
+                compilation_callback(compiler)
                     .await
                     .context("Compilation callback for deployed libraries failed")?
                     .compiler_output
@@ -147,8 +175,8 @@ impl<'a> CachedCompiler<'a> {
                         if deployed_libraries.is_some() {
                             reporter
                                 .report_post_link_contracts_compilation_succeeded_event(
-                                    compiler.version().clone(),
-                                    compiler.path(),
+                                    compiler_version.clone(),
+                                    &compiler_path,
                                     true,
                                     None,
                                     cache_value.compiler_output.clone(),
@@ -157,8 +185,8 @@ impl<'a> CachedCompiler<'a> {
                         } else {
                             reporter
                                 .report_pre_link_contracts_compilation_succeeded_event(
-                                    compiler.version().clone(),
-                                    compiler.path(),
+                                    compiler_version.clone(),
+                                    &compiler_path,
                                     true,
                                     None,
                                     cache_value.compiler_output.clone(),
@@ -168,7 +196,7 @@ impl<'a> CachedCompiler<'a> {
                         cache_value.compiler_output
                     }
                     None => {
-                        let compiler_output = compilation_callback()
+                        let compiler_output = compilation_callback(compiler)
                             .await
                             .context("Compilation callback failed (cache miss path)")?
                             .compiler_output;
@@ -193,12 +221,15 @@ impl<'a> CachedCompiler<'a> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn compile_contracts(
     metadata_directory: impl AsRef<Path>,
     mut files_to_compile: impl Iterator<Item = PathBuf>,
     mode: &Mode,
     deployed_libraries: Option<&HashMap<ContractInstance, (ContractIdent, Address, JsonAbi)>>,
     compiler: &dyn SolidityCompiler,
+    compiler_version: Version,
+    compiler_path: PathBuf,
     reporter: &ExecutionSpecificReporter,
 ) -> Result<CompilerOutput> {
     // Puts a limit on how many compilations we can perform at any given instance which helps us
@@ -246,8 +277,8 @@ async fn compile_contracts(
         (Ok(output), true) => {
             reporter
                 .report_post_link_contracts_compilation_succeeded_event(
-                    compiler.version().clone(),
-                    compiler.path(),
+                    compiler_version.clone(),
+                    &compiler_path,
                     false,
                     input,
                     output.clone(),
@@ -257,8 +288,8 @@ async fn compile_contracts(
         (Ok(output), false) => {
             reporter
                 .report_pre_link_contracts_compilation_succeeded_event(
-                    compiler.version().clone(),
-                    compiler.path(),
+                    compiler_version.clone(),
+                    &compiler_path,
                     false,
                     input,
                     output.clone(),
@@ -268,8 +299,8 @@ async fn compile_contracts(
         (Err(err), true) => {
             reporter
                 .report_post_link_contracts_compilation_failed_event(
-                    compiler.version().clone(),
-                    compiler.path().to_path_buf(),
+                    compiler_version.clone(),
+                    compiler_path.clone(),
                     input,
                     format!("{err:#}"),
                 )
@@ -278,8 +309,8 @@ async fn compile_contracts(
         (Err(err), false) => {
             reporter
                 .report_pre_link_contracts_compilation_failed_event(
-                    compiler.version().clone(),
-                    compiler.path().to_path_buf(),
+                    compiler_version,
+                    compiler_path,
                     input,
                     format!("{err:#}"),
                 )
@@ -311,7 +342,7 @@ impl ArtifactsCache {
     }
 
     #[instrument(level = "debug", skip_all, err)]
-    pub async fn insert(&self, key: &CacheKey<'_>, value: &CacheValue) -> Result<()> {
+    pub async fn insert(&self, key: &CacheKey, value: &CacheValue) -> Result<()> {
         let key = serde_json::to_vec(key).context("Failed to serialize cache key (json)")?;
         let value = serde_json::to_vec(value).context("Failed to serialize cache value (json)")?;
         cacache::write(self.path.as_path(), key.encode_hex(), value)
@@ -322,7 +353,7 @@ impl ArtifactsCache {
         Ok(())
     }
 
-    pub async fn get(&self, key: &CacheKey<'_>) -> Option<CacheValue> {
+    pub async fn get(&self, key: &CacheKey) -> Option<CacheValue> {
         let key = serde_json::to_vec(key).ok()?;
         let value = cacache::read(self.path.as_path(), key.encode_hex())
             .await
@@ -333,7 +364,7 @@ impl ArtifactsCache {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
-struct CacheKey<'a> {
+struct CacheKey {
     /// The identifier of the used compiler.
     compiler_identifier: CompilerIdentifier,
 
@@ -341,10 +372,10 @@ struct CacheKey<'a> {
     compiler_version: Version,
 
     /// The path of the metadata file that the compilation artifacts are for.
-    metadata_file_path: &'a Path,
+    metadata_file_path: PathBuf,
 
     /// The mode that the compilation artifacts where compiled with.
-    solc_mode: Cow<'a, Mode>,
+    solc_mode: Mode,
 
     /// The resolc PVM heap size setting, if applicable.
     resolc_heap_size: Option<u32>,

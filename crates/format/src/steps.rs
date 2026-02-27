@@ -1044,62 +1044,62 @@ mod tests {
     struct MockResolver;
 
     impl ResolverApi for MockResolver {
-        fn chain_id(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<ChainId>> + '_>> {
+        fn chain_id(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<ChainId>> + Send + '_>> {
             Box::pin(async move { Ok(0x123) })
         }
 
         fn block_gas_limit(
             &self,
             _: BlockNumberOrTag,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<u128>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<u128>> + Send + '_>> {
             Box::pin(async move { Ok(0x1234) })
         }
 
         fn block_coinbase(
             &self,
             _: BlockNumberOrTag,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Address>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Address>> + Send + '_>> {
             Box::pin(async move { Ok(Address::ZERO) })
         }
 
         fn block_difficulty(
             &self,
             _: BlockNumberOrTag,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + Send + '_>> {
             Box::pin(async move { Ok(U256::from(0x12345u128)) })
         }
 
         fn block_base_fee(
             &self,
             _: BlockNumberOrTag,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<u64>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<u64>> + Send + '_>> {
             Box::pin(async move { Ok(0x100) })
         }
 
         fn block_hash(
             &self,
             _: BlockNumberOrTag,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockHash>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockHash>> + Send + '_>> {
             Box::pin(async move { Ok([0xEE; 32].into()) })
         }
 
         fn block_timestamp(
             &self,
             _: BlockNumberOrTag,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockTimestamp>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockTimestamp>> + Send + '_>> {
             Box::pin(async move { Ok(0x123456) })
         }
 
         fn last_block_number(
             &self,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockNumber>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockNumber>> + Send + '_>> {
             Box::pin(async move { Ok(0x1234567) })
         }
 
         fn transaction_gas_price(
             &self,
             _: TxHash,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<u128>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<u128>> + Send + '_>> {
             Box::pin(async move { Ok(0x200) })
         }
     }

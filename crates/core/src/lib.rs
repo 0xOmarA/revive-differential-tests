@@ -5,6 +5,7 @@
 
 use std::{
     pin::Pin,
+    sync::Arc,
     thread::{self, JoinHandle},
 };
 
@@ -26,7 +27,7 @@ use tracing::info;
 
 /// A trait that describes the interface for the platforms that are supported by the tool.
 #[allow(clippy::type_complexity)]
-pub trait Platform {
+pub trait Platform: Send + Sync {
     /// Returns the identifier of this platform. This is a combination of the node and the compiler
     /// used.
     fn platform_identifier(&self) -> PlatformIdentifier;
@@ -61,7 +62,7 @@ pub trait Platform {
         &self,
         context: Context,
         version: Option<VersionOrRequirement>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>>>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>> + Send>>;
 
     /// Exports the genesis/chainspec for the node.
     fn export_genesis(&self, context: Context) -> anyhow::Result<serde_json::Value>;
@@ -105,7 +106,7 @@ impl Platform for GethEvmSolcPlatform {
         &self,
         context: Context,
         version: Option<VersionOrRequirement>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>> + Send>> {
         Box::pin(async move {
             let compiler = Solc::new(context, version).await;
             compiler.map(|compiler| Box::new(compiler) as Box<dyn SolidityCompiler>)
@@ -160,7 +161,7 @@ impl Platform for LighthouseGethEvmSolcPlatform {
         &self,
         context: Context,
         version: Option<VersionOrRequirement>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>> + Send>> {
         Box::pin(async move {
             let compiler = Solc::new(context, version).await;
             compiler.map(|compiler| Box::new(compiler) as Box<dyn SolidityCompiler>)
@@ -235,7 +236,7 @@ impl Platform for ReviveDevNodePolkavmResolcPlatform {
         &self,
         context: Context,
         version: Option<VersionOrRequirement>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>> + Send>> {
         Box::pin(async move {
             let compiler = Resolc::new(context, version).await;
             compiler.map(|compiler| Box::new(compiler) as Box<dyn SolidityCompiler>)
@@ -309,7 +310,7 @@ impl Platform for ReviveDevNodeRevmSolcPlatform {
         &self,
         context: Context,
         version: Option<VersionOrRequirement>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>> + Send>> {
         Box::pin(async move {
             let compiler = Solc::new(context, version).await;
             compiler.map(|compiler| Box::new(compiler) as Box<dyn SolidityCompiler>)
@@ -365,7 +366,7 @@ impl Platform for ZombienetPolkavmResolcPlatform {
         &self,
         context: Context,
         version: Option<VersionOrRequirement>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>> + Send>> {
         Box::pin(async move {
             let compiler = Resolc::new(context, version).await;
             compiler.map(|compiler| Box::new(compiler) as Box<dyn SolidityCompiler>)
@@ -420,7 +421,7 @@ impl Platform for ZombienetRevmSolcPlatform {
         &self,
         context: Context,
         version: Option<VersionOrRequirement>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>> + Send>> {
         Box::pin(async move {
             let compiler = Solc::new(context, version).await;
             compiler.map(|compiler| Box::new(compiler) as Box<dyn SolidityCompiler>)
@@ -473,7 +474,7 @@ impl Platform for PolkadotOmniNodePolkavmResolcPlatform {
         &self,
         context: Context,
         version: Option<VersionOrRequirement>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>> + Send>> {
         Box::pin(async move {
             let compiler = Resolc::new(context, version).await;
             compiler.map(|compiler| Box::new(compiler) as Box<dyn SolidityCompiler>)
@@ -533,7 +534,7 @@ impl Platform for PolkadotOmniNodeRevmSolcPlatform {
         &self,
         context: Context,
         version: Option<VersionOrRequirement>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>>>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn SolidityCompiler>>> + Send>> {
         Box::pin(async move {
             let compiler = Solc::new(context, version).await;
             compiler.map(|compiler| Box::new(compiler) as Box<dyn SolidityCompiler>)
@@ -553,6 +554,12 @@ impl Platform for PolkadotOmniNodeRevmSolcPlatform {
                 .context("No WASM runtime path found in the polkadot-omni-node configuration")?,
         )
     }
+}
+
+/// Converts a `PlatformIdentifier` into an `Arc<dyn Platform>`.
+pub fn platform_from_identifier(value: PlatformIdentifier) -> Arc<dyn Platform> {
+    let boxed: Box<dyn Platform> = value.into();
+    Arc::from(boxed)
 }
 
 impl From<PlatformIdentifier> for Box<dyn Platform> {

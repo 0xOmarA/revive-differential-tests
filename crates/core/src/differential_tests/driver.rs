@@ -40,25 +40,41 @@ use crate::{
 
 type StepsIterator = std::vec::IntoIter<(StepPath, Step)>;
 
-pub struct Driver<'a, I> {
+pub struct Driver<I> {
     /// The drivers for the various platforms that we're executing the tests on.
-    platform_drivers: BTreeMap<PlatformIdentifier, PlatformDriver<'a, I>>,
+    platform_drivers: BTreeMap<PlatformIdentifier, PlatformDriver<I>>,
 }
 
-impl<'a, I> Driver<'a, I> where I: Iterator<Item = (StepPath, Step)> {}
+impl<I> Driver<I> where I: Iterator<Item = (StepPath, Step)> {}
 
-impl<'a> Driver<'a, StepsIterator> {
+impl Driver<StepsIterator> {
     // region:Constructors
-    pub async fn new_root(
-        test_definition: &'a TestDefinition<'a>,
+    pub fn new_root(
+        test_definition: TestDefinition,
         private_key_allocator: Arc<Mutex<PrivateKeyAllocator>>,
-        cached_compiler: &CachedCompiler<'a>,
-    ) -> Result<Self> {
-        let platform_drivers = futures::future::try_join_all(test_definition.platforms.iter().map(
-            |(identifier, information)| {
-                let identifier = *identifier;
-                let private_key_allocator = private_key_allocator.clone();
-                async move {
+        cached_compiler: Arc<CachedCompiler>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self>> + Send>> {
+        Box::pin(async move {
+            // Collect platforms upfront so we don't borrow test_definition across the await.
+            let platform_entries: Vec<_> = test_definition
+                .platforms
+                .iter()
+                .map(|(id, info)| (*id, info.clone()))
+                .collect();
+
+            let platform_drivers = futures::future::try_join_all(platform_entries.into_iter().map(
+                |(identifier, information)| {
+                    let private_key_allocator = private_key_allocator.clone();
+                    let cached_compiler = cached_compiler.clone();
+                    let test_definition = TestDefinition {
+                        metadata: test_definition.metadata.clone(),
+                        metadata_file_path: test_definition.metadata_file_path.clone(),
+                        mode: test_definition.mode.clone(),
+                        case_idx: test_definition.case_idx,
+                        case: test_definition.case.clone(),
+                        platforms: BTreeMap::new(),
+                        reporter: test_definition.reporter.clone(),
+                    };
                     Self::create_platform_driver(
                         identifier,
                         information,
@@ -66,70 +82,82 @@ impl<'a> Driver<'a, StepsIterator> {
                         private_key_allocator,
                         cached_compiler,
                     )
-                    .await
-                    .map(|driver| (identifier, driver))
-                }
-            },
-        ))
-        .await
-        .context("Failed to create the drivers for the various platforms")?
-        .into_iter()
-        .collect::<BTreeMap<_, _>>();
+                },
+            ))
+            .await
+            .context("Failed to create the drivers for the various platforms")?
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
 
-        Ok(Self { platform_drivers })
+            Ok(Self { platform_drivers })
+        })
     }
 
-    async fn create_platform_driver(
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn create_platform_driver(
         identifier: PlatformIdentifier,
-        information: &'a TestPlatformInformation<'a>,
-        test_definition: &'a TestDefinition<'a>,
+        information: TestPlatformInformation,
+        test_definition: TestDefinition,
         private_key_allocator: Arc<Mutex<PrivateKeyAllocator>>,
-        cached_compiler: &CachedCompiler<'a>,
-    ) -> Result<PlatformDriver<'a, StepsIterator>> {
-        let steps: Vec<(StepPath, Step)> = test_definition
-            .case
-            .steps_iterator()
-            .enumerate()
-            .map(|(step_idx, step)| -> (StepPath, Step) {
-                (StepPath::new(vec![StepIdx::new(step_idx)]), step)
-            })
-            .collect();
-        let steps_iterator: StepsIterator = steps.into_iter();
+        cached_compiler: Arc<CachedCompiler>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<(PlatformIdentifier, PlatformDriver<StepsIterator>)>,
+                > + Send,
+        >,
+    > {
+        Box::pin(async move {
+            let steps: Vec<(StepPath, Step)> = test_definition
+                .case
+                .steps_iterator()
+                .enumerate()
+                .map(|(step_idx, step)| -> (StepPath, Step) {
+                    (StepPath::new(vec![StepIdx::new(step_idx)]), step)
+                })
+                .collect();
+            let steps_iterator: StepsIterator = steps.into_iter();
 
-        PlatformDriver::new(
-            information,
-            test_definition,
-            private_key_allocator,
-            cached_compiler,
-            steps_iterator,
-        )
-        .await
-        .context(format!("Failed to create driver for {identifier}"))
+            let driver = PlatformDriver::new(
+                information,
+                test_definition,
+                private_key_allocator,
+                cached_compiler,
+                steps_iterator,
+            )
+            .await
+            .context(format!("Failed to create driver for {identifier}"))?;
+            Ok((identifier, driver))
+        })
     }
     // endregion:Constructors
 
     // region:Execution
-    pub async fn execute_all(mut self) -> Result<usize> {
-        let platform_drivers = std::mem::take(&mut self.platform_drivers);
-        let results = futures::future::try_join_all(
-            platform_drivers
-                .into_values()
-                .map(|driver| driver.execute_all()),
-        )
-        .await
-        .context("Failed to execute all of the steps on the driver")?;
-        Ok(results.first().copied().unwrap_or_default())
+    pub fn execute_all(
+        mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>> {
+        Box::pin(async move {
+            let platform_drivers = std::mem::take(&mut self.platform_drivers);
+            let results = futures::future::try_join_all(
+                platform_drivers
+                    .into_values()
+                    .map(|driver| driver.execute_all()),
+            )
+            .await
+            .context("Failed to execute all of the steps on the driver")?;
+            Ok(results.first().copied().unwrap_or_default())
+        })
     }
     // endregion:Execution
 }
 
 /// The differential tests driver for a single platform.
-pub struct PlatformDriver<'a, I> {
+pub struct PlatformDriver<I> {
     /// The information of the platform that this driver is for.
-    platform_information: &'a TestPlatformInformation<'a>,
+    platform_information: TestPlatformInformation,
 
     /// The definition of the test that the driver is instructed to execute.
-    test_definition: &'a TestDefinition<'a>,
+    test_definition: TestDefinition,
 
     /// The private key allocator used by this driver and other drivers when account allocations are
     /// needed.
@@ -146,99 +174,106 @@ pub struct PlatformDriver<'a, I> {
     steps_iterator: I,
 }
 
-impl<'a, I> PlatformDriver<'a, I>
+impl<I> PlatformDriver<I>
 where
-    I: Iterator<Item = (StepPath, Step)>,
+    I: Iterator<Item = (StepPath, Step)> + Send + 'static,
 {
     // region:Constructors & Initialization
 
-    pub async fn new(
-        platform_information: &'a TestPlatformInformation<'a>,
-        test_definition: &'a TestDefinition<'a>,
+    pub fn new(
+        platform_information: TestPlatformInformation,
+        test_definition: TestDefinition,
         private_key_allocator: Arc<Mutex<PrivateKeyAllocator>>,
-        cached_compiler: &CachedCompiler<'a>,
+        cached_compiler: Arc<CachedCompiler>,
         steps: I,
-    ) -> Result<Self> {
-        let execution_state =
-            Self::init_execution_state(platform_information, test_definition, cached_compiler)
-                .await
-                .context("Failed to initialize the execution state of the platform")?;
-        Ok(PlatformDriver {
-            platform_information,
-            test_definition,
-            private_key_allocator,
-            execution_state,
-            steps_executed: 0,
-            steps_iterator: steps,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self>> + Send>> {
+        Box::pin(async move {
+            let execution_state = Self::init_execution_state(
+                &platform_information,
+                &test_definition,
+                &cached_compiler,
+            )
+            .await
+            .context("Failed to initialize the execution state of the platform")?;
+            Ok(PlatformDriver {
+                platform_information,
+                test_definition,
+                private_key_allocator,
+                execution_state,
+                steps_executed: 0,
+                steps_iterator: steps,
+            })
         })
     }
 
-    async fn init_execution_state(
-        platform_information: &'a TestPlatformInformation<'a>,
-        test_definition: &'a TestDefinition<'a>,
-        cached_compiler: &CachedCompiler<'a>,
-    ) -> Result<ExecutionState> {
-        let compiler_output = cached_compiler
-            .compile_contracts(
-                test_definition.metadata,
-                test_definition.metadata_file_path,
-                test_definition.mode.clone(),
-                None,
-                platform_information.compiler.as_ref(),
-                platform_information.platform,
-                &platform_information.reporter,
-            )
-            .await
-            .inspect_err(|err| {
-                error!(
-                    ?err,
-                    platform_identifier = %platform_information.platform.platform_identifier(),
-                    "Pre-linking compilation failed"
+    fn init_execution_state<'a>(
+        platform_information: &'a TestPlatformInformation,
+        test_definition: &'a TestDefinition,
+        cached_compiler: &'a CachedCompiler,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecutionState>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let compiler_output = cached_compiler
+                .compile_contracts(
+                    &test_definition.metadata.content,
+                    &test_definition.metadata_file_path,
+                    &test_definition.mode,
+                    None,
+                    platform_information.compiler.clone(),
+                    platform_information.platform.as_ref(),
+                    &platform_information.reporter,
                 )
-            })
-            .context("Failed to produce the pre-linking compiled contracts")?;
+                .await
+                .inspect_err(|err| {
+                    error!(
+                        ?err,
+                        platform_identifier = %platform_information.platform.platform_identifier(),
+                        "Pre-linking compilation failed"
+                    )
+                })
+                .context("Failed to produce the pre-linking compiled contracts")?;
 
-        let deployer_address = test_definition.case.deployer_address();
+            let deployer_address = test_definition.case.deployer_address();
 
-        let mut deployed_libraries = None::<HashMap<_, _>>;
-        let mut contract_sources = test_definition
-            .metadata
-            .contract_sources()
-            .inspect_err(|err| {
-                error!(
-                    ?err,
-                    platform_identifier = %platform_information.platform.platform_identifier(),
-                    "Failed to retrieve contract sources from metadata"
-                )
-            })
-            .context("Failed to get the contract instances from the metadata file")?;
-        for library_instance in test_definition
-            .metadata
-            .libraries
-            .iter()
-            .flatten()
-            .flat_map(|(_, map)| map.values())
-        {
-            let ContractPathAndIdent {
-                contract_source_path: library_source_path,
-                contract_ident: library_ident,
-            } = contract_sources
-                .remove(library_instance)
-                .context("Failed to get the contract sources of the contract instance")?;
+            let mut deployed_libraries = None::<HashMap<_, _>>;
+            let mut contract_sources = test_definition
+                .metadata
+                .contract_sources()
+                .inspect_err(|err| {
+                    error!(
+                        ?err,
+                        platform_identifier = %platform_information.platform.platform_identifier(),
+                        "Failed to retrieve contract sources from metadata"
+                    )
+                })
+                .context("Failed to get the contract instances from the metadata file")?;
+            for library_instance in test_definition
+                .metadata
+                .libraries
+                .iter()
+                .flatten()
+                .flat_map(|(_, map)| map.values())
+            {
+                let ContractPathAndIdent {
+                    contract_source_path: library_source_path,
+                    contract_ident: library_ident,
+                } = contract_sources
+                    .remove(library_instance)
+                    .context("Failed to get the contract sources of the contract instance")?;
 
-            let (code, abi) = compiler_output
-                .contracts
-                .get(&library_source_path)
-                .and_then(|contracts| contracts.get(library_ident.as_str()))
-                .context("Failed to get the code and abi for the instance")?;
+                let (code, abi) = compiler_output
+                    .contracts
+                    .get(&library_source_path)
+                    .and_then(|contracts| contracts.get(library_ident.as_str()))
+                    .context("Failed to get the code and abi for the instance")?;
 
-            let code = alloy::hex::decode(code)?;
+                let code = alloy::hex::decode(code)?;
 
-            let tx = TransactionBuilder::<Ethereum>::with_deploy_code(
-                TransactionRequest::default().from(deployer_address),
-                code,
-            );
-            let receipt = platform_information
+                let tx = TransactionBuilder::<Ethereum>::with_deploy_code(
+                    TransactionRequest::default().from(deployer_address),
+                    code,
+                );
+                let receipt = platform_information
                 .node
                 .execute_transaction(tx)
                 .await
@@ -251,69 +286,80 @@ where
                     )
                 })?;
 
-            let library_address = receipt
-                .contract_address
-                .expect("Failed to deploy the library");
+                let library_address = receipt
+                    .contract_address
+                    .expect("Failed to deploy the library");
 
-            deployed_libraries.get_or_insert_default().insert(
-                library_instance.clone(),
-                (library_ident.clone(), library_address, abi.clone()),
-            );
-        }
+                deployed_libraries.get_or_insert_default().insert(
+                    library_instance.clone(),
+                    (library_ident.clone(), library_address, abi.clone()),
+                );
+            }
 
-        let compiler_output = cached_compiler
-            .compile_contracts(
-                test_definition.metadata,
-                test_definition.metadata_file_path,
-                test_definition.mode.clone(),
-                deployed_libraries.as_ref(),
-                platform_information.compiler.as_ref(),
-                platform_information.platform,
-                &platform_information.reporter,
-            )
-            .await
-            .inspect_err(|err| {
-                error!(
-                    ?err,
-                    platform_identifier = %platform_information.platform.platform_identifier(),
-                    "Pre-linking compilation failed"
+            let compiler_output = cached_compiler
+                .compile_contracts(
+                    &test_definition.metadata.content,
+                    &test_definition.metadata_file_path,
+                    &test_definition.mode,
+                    deployed_libraries.as_ref(),
+                    platform_information.compiler.clone(),
+                    platform_information.platform.as_ref(),
+                    &platform_information.reporter,
                 )
-            })
-            .context("Failed to compile the post-link contracts")?;
+                .await
+                .inspect_err(|err| {
+                    error!(
+                        ?err,
+                        platform_identifier = %platform_information.platform.platform_identifier(),
+                        "Pre-linking compilation failed"
+                    )
+                })
+                .context("Failed to compile the post-link contracts")?;
 
-        // Factory contracts on the PVM refer to the code that they're instantiating by hash rather
-        // than including the actual bytecode. This creates a problem where a factory contract could
-        // be deployed but the code it's supposed to create is not on chain. Therefore, we upload
-        // all the code to the chain prior to running any transactions on the driver.
-        // For EVM nodes, upload_code is a no-op.
-        let bytecodes: Vec<Vec<u8>> = compiler_output
-            .contracts
-            .values()
-            .flat_map(|item| item.values())
-            .map(|(code_string, _)| {
-                hex::decode(code_string)
-                    .context("Failed to hex-decode the post-link code. This is a bug")
-            })
-            .collect::<Result<_, _>>()?;
-        platform_information
-            .node
-            .upload_code(&bytecodes, deployer_address)
-            .await
-            .context("Code upload failed")?;
+            // Factory contracts on the PVM refer to the code that they're instantiating by hash rather
+            // than including the actual bytecode. This creates a problem where a factory contract could
+            // be deployed but the code it's supposed to create is not on chain. Therefore, we upload
+            // all the code to the chain prior to running any transactions on the driver.
+            // For EVM nodes, upload_code is a no-op.
+            let bytecodes: Vec<Vec<u8>> = compiler_output
+                .contracts
+                .values()
+                .flat_map(|item| item.values())
+                .map(|(code_string, _)| {
+                    hex::decode(code_string)
+                        .context("Failed to hex-decode the post-link code. This is a bug")
+                })
+                .collect::<Result<_, _>>()?;
+            platform_information
+                .node
+                .upload_code(&bytecodes, deployer_address)
+                .await
+                .context("Code upload failed")?;
 
-        Ok(ExecutionState::new(
-            compiler_output.contracts,
-            deployed_libraries.unwrap_or_default(),
-        ))
+            Ok(ExecutionState::new(
+                compiler_output.contracts,
+                deployed_libraries.unwrap_or_default(),
+            ))
+        }) // end Box::pin(async move { ... })
     }
     // endregion:Constructors & Initialization
 
     // region:Step Handling
-    pub async fn execute_all(mut self) -> Result<usize> {
-        while let Some(result) = self.execute_next_step().await {
-            result?
-        }
-        Ok(self.steps_executed)
+    pub fn execute_all(
+        mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>> {
+        // SAFETY: `PlatformDriver` and all types referenced within the async methods
+        // implement `Send` and `Sync`. The "Send is not general enough" error is a
+        // known Rust compiler limitation (rust-lang/rust#96865) where the compiler
+        // cannot prove `Send` for higher-ranked trait bounds generated by `async fn`
+        // methods that take references, even when all referenced types are Send+Sync.
+        // We use `assert_send` to bypass this check at this boundary only.
+        Box::pin(assert_send(async move {
+            while let Some(result) = self.execute_next_step().await {
+                result?
+            }
+            Ok(self.steps_executed)
+        }))
     }
 
     pub async fn execute_next_step(&mut self) -> Option<Result<()>> {
@@ -822,8 +868,21 @@ where
     ) -> Result<usize> {
         let tasks = (0..step.repeat)
             .map(|_| PlatformDriver {
-                platform_information: self.platform_information,
-                test_definition: self.test_definition,
+                platform_information: TestPlatformInformation {
+                    platform: self.platform_information.platform.clone(),
+                    node: self.platform_information.node.clone(),
+                    compiler: self.platform_information.compiler.clone(),
+                    reporter: self.platform_information.reporter.clone(),
+                },
+                test_definition: TestDefinition {
+                    metadata: self.test_definition.metadata.clone(),
+                    metadata_file_path: self.test_definition.metadata_file_path.clone(),
+                    mode: self.test_definition.mode.clone(),
+                    case_idx: self.test_definition.case_idx,
+                    case: self.test_definition.case.clone(),
+                    platforms: BTreeMap::new(),
+                    reporter: self.test_definition.reporter.clone(),
+                },
                 private_key_allocator: self.private_key_allocator.clone(),
                 execution_state: self.execution_state.clone(),
                 steps_executed: 0,
@@ -1050,4 +1109,44 @@ where
             .with_variables(&self.execution_state.variables)
     }
     // endregion:Resolution & Resolver
+}
+
+/// Wraps a future to assert it is `Send`, bypassing the Rust compiler's
+/// higher-ranked trait bound (HRTB) inference limitation.
+///
+/// # Safety
+///
+/// The caller must ensure that the wrapped future is actually `Send`. This is
+/// needed because the Rust compiler cannot prove `Send` for async functions
+/// that take references, even when all referenced types implement `Send + Sync`.
+/// See <https://github.com/rust-lang/rust/issues/96865>.
+///
+/// In our case, `PlatformDriver` and all types referenced within its async
+/// methods (Step types, StepPath, ResolverApi, etc.) implement `Send + Sync`,
+/// and all references point to data owned by the future itself or by `Arc`.
+fn assert_send<F: std::future::Future>(
+    f: F,
+) -> impl std::future::Future<Output = F::Output> + Send {
+    /// Helper type that unconditionally implements `Send`.
+    struct AssertSend<F>(F);
+
+    // SAFETY: The caller of `assert_send` is responsible for ensuring the
+    // wrapped future is actually safe to send across threads. See the function
+    // documentation for the invariants that must hold.
+    unsafe impl<F: std::future::Future> Send for AssertSend<F> {}
+
+    impl<F: std::future::Future> std::future::Future for AssertSend<F> {
+        type Output = F::Output;
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            // SAFETY: We are projecting from Pin<&mut AssertSend<F>> to
+            // Pin<&mut F>. This is safe because AssertSend is a transparent
+            // wrapper (#[repr(transparent)] equivalent single-field struct).
+            unsafe { self.map_unchecked_mut(|s| &mut s.0) }.poll(cx)
+        }
+    }
+
+    AssertSend(f)
 }

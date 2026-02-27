@@ -27,7 +27,7 @@ pub mod revive_resolc;
 pub mod solc;
 
 /// A common interface for all supported Solidity compilers.
-pub trait SolidityCompiler {
+pub trait SolidityCompiler: Send + Sync {
     /// Returns the version of the compiler.
     fn version(&self) -> &Version;
 
@@ -38,7 +38,7 @@ pub trait SolidityCompiler {
     fn build(
         &self,
         input: CompilerInput,
-    ) -> Pin<Box<dyn Future<Output = Result<CompilerOutput>> + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<CompilerOutput>> + Send + '_>>;
 
     /// Does the compiler support the provided mode and version settings.
     fn supports_mode(

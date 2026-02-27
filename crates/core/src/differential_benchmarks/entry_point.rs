@@ -5,7 +5,6 @@ use std::{collections::BTreeMap, sync::Arc};
 use anyhow::Context as _;
 use futures::{FutureExt, StreamExt};
 use revive_dt_common::types::PrivateKeyAllocator;
-use revive_dt_core::Platform;
 use revive_dt_format::{
     corpus::Corpus,
     steps::{Step, StepIdx, StepPath},
@@ -60,7 +59,7 @@ pub async fn handle_differential_benchmarks(
         .platforms
         .iter()
         .copied()
-        .map(Into::<&dyn Platform>::into)
+        .map(revive_dt_core::platform_from_identifier)
         .collect::<Vec<_>>();
 
     // Starting the nodes of the various platforms specified in the context. Note that we use the
@@ -75,7 +74,7 @@ pub async fn handle_differential_benchmarks(
         for platform in platforms.iter() {
             let platform_identifier = platform.platform_identifier();
 
-            let node_pool = NodePool::new(full_context.clone(), *platform)
+            let node_pool = NodePool::new(full_context.clone(), platform.as_ref())
                 .await
                 .inspect_err(|err| {
                     error!(
@@ -86,7 +85,7 @@ pub async fn handle_differential_benchmarks(
                 })
                 .context("Failed to initialize the node pool")?;
 
-            map.insert(platform_identifier, (*platform, node_pool));
+            map.insert(platform_identifier, (platform.clone(), node_pool));
         }
 
         map
@@ -121,7 +120,7 @@ pub async fn handle_differential_benchmarks(
     .context("Failed to initialize cached compiler")?;
 
     // The inclusion watcher to use for all of the benchmarks.
-    let inclusion_watcher = InclusionWatcher::new();
+    let inclusion_watcher = Arc::new(InclusionWatcher::new());
 
     // Note: we do not want to run all of the workloads concurrently on all platforms. Rather, we'd
     // like to run all of the workloads for one platform, and then the next sequentially as we'd
@@ -164,7 +163,7 @@ pub async fn handle_differential_benchmarks(
                 cached_compiler.as_ref(),
                 watcher_tx.clone(),
                 context.benchmark_run.await_transaction_inclusion,
-                &inclusion_watcher,
+                inclusion_watcher.clone(),
                 test_definition
                     .case
                     .steps_iterator_for_benchmarks(context.benchmark_run.default_repetition_count)

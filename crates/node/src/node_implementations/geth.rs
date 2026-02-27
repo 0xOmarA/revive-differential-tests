@@ -260,7 +260,7 @@ impl GethNode {
 }
 
 impl EthereumNode for GethNode {
-    fn pre_transactions(&mut self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + '_>> {
+    fn pre_transactions(&mut self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
         Box::pin(async move { Ok(()) })
     }
 
@@ -275,7 +275,7 @@ impl EthereumNode for GethNode {
     fn submit_transaction(
         &self,
         transaction: TransactionRequest,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<TxHash>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<TxHash>> + Send + '_>> {
         Box::pin(async move {
             let provider = self.provider().await?.erased();
             crate::helpers::shared_node_ops::submit_transaction(&provider, transaction).await
@@ -285,7 +285,7 @@ impl EthereumNode for GethNode {
     fn get_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<TransactionReceipt>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<TransactionReceipt>> + Send + '_>> {
         Box::pin(async move {
             let provider = self.provider().await?.erased();
             crate::helpers::shared_node_ops::get_receipt(&provider, tx_hash).await
@@ -295,7 +295,7 @@ impl EthereumNode for GethNode {
     fn execute_transaction(
         &self,
         transaction: TransactionRequest,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<TransactionReceipt>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<TransactionReceipt>> + Send + '_>> {
         Box::pin(async move {
             let provider = self.provider().await?.erased();
             crate::helpers::shared_node_ops::execute_transaction(&provider, transaction).await
@@ -306,7 +306,7 @@ impl EthereumNode for GethNode {
         &self,
         tx_hash: TxHash,
         trace_options: GethDebugTracingOptions,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<GethTrace>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<GethTrace>> + Send + '_>> {
         Box::pin(async move {
             let provider = self.provider().await?.erased();
             crate::helpers::shared_node_ops::trace_transaction(&provider, tx_hash, trace_options)
@@ -317,7 +317,7 @@ impl EthereumNode for GethNode {
     fn state_diff(
         &self,
         tx_hash: TxHash,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<DiffMode>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<DiffMode>> + Send + '_>> {
         Box::pin(async move {
             let provider = self.provider().await?.erased();
             crate::helpers::shared_node_ops::state_diff(&provider, tx_hash).await
@@ -327,7 +327,7 @@ impl EthereumNode for GethNode {
     fn balance_of(
         &self,
         address: Address,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + Send + '_>> {
         Box::pin(async move {
             let provider = self.provider().await?.erased();
             crate::helpers::shared_node_ops::balance_of(&provider, address).await
@@ -338,7 +338,7 @@ impl EthereumNode for GethNode {
         &self,
         address: Address,
         keys: Vec<StorageKey>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<EIP1186AccountProofResponse>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<EIP1186AccountProofResponse>> + Send + '_>> {
         Box::pin(async move {
             let provider = self.provider().await?.erased();
             crate::helpers::shared_node_ops::latest_state_proof(&provider, address, keys).await
@@ -348,7 +348,7 @@ impl EthereumNode for GethNode {
     // #[instrument(level = "info", skip_all, fields(geth_node_id = self.id))]
     fn resolver(
         &self,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Arc<dyn ResolverApi + '_>>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Arc<dyn ResolverApi>>> + Send + '_>> {
         Box::pin(async move {
             let id = self.id;
             let provider = self.provider().await?;
@@ -364,8 +364,8 @@ impl EthereumNode for GethNode {
         &self,
     ) -> Pin<
         Box<
-            dyn Future<Output = anyhow::Result<Pin<Box<dyn Stream<Item = MinedBlockInformation>>>>>
-                + '_,
+            dyn Future<Output = anyhow::Result<Pin<Box<dyn Stream<Item = MinedBlockInformation> + Send>>>>
+                + Send + '_,
         >,
     > {
         Box::pin(async move {
@@ -400,13 +400,13 @@ impl EthereumNode for GethNode {
             });
 
             Ok(Box::pin(mined_block_information_stream)
-                as Pin<Box<dyn Stream<Item = MinedBlockInformation>>>)
+                as Pin<Box<dyn Stream<Item = MinedBlockInformation> + Send>>)
         })
     }
 
     fn provider(
         &self,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<alloy::providers::DynProvider<Ethereum>>> + '_>>
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<alloy::providers::DynProvider<Ethereum>>> + Send + '_>>
     {
         Box::pin(
             self.provider()
@@ -424,7 +424,7 @@ impl ResolverApi for GethNodeResolver {
     #[instrument(level = "info", skip_all, fields(geth_node_id = self.id))]
     fn chain_id(
         &self,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<alloy::primitives::ChainId>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<alloy::primitives::ChainId>> + Send + '_>> {
         Box::pin(async move { self.provider.get_chain_id().await.map_err(Into::into) })
     }
 
@@ -432,7 +432,7 @@ impl ResolverApi for GethNodeResolver {
     fn transaction_gas_price(
         &self,
         tx_hash: TxHash,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<u128>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<u128>> + Send + '_>> {
         Box::pin(async move {
             self.provider
                 .get_transaction_receipt(tx_hash)
@@ -446,7 +446,7 @@ impl ResolverApi for GethNodeResolver {
     fn block_gas_limit(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<u128>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<u128>> + Send + '_>> {
         Box::pin(async move {
             self.provider
                 .get_block_by_number(number)
@@ -461,7 +461,7 @@ impl ResolverApi for GethNodeResolver {
     fn block_coinbase(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Address>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Address>> + Send + '_>> {
         Box::pin(async move {
             self.provider
                 .get_block_by_number(number)
@@ -476,7 +476,7 @@ impl ResolverApi for GethNodeResolver {
     fn block_difficulty(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + Send + '_>> {
         Box::pin(async move {
             self.provider
                 .get_block_by_number(number)
@@ -491,7 +491,7 @@ impl ResolverApi for GethNodeResolver {
     fn block_base_fee(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<u64>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<u64>> + Send + '_>> {
         Box::pin(async move {
             self.provider
                 .get_block_by_number(number)
@@ -511,7 +511,7 @@ impl ResolverApi for GethNodeResolver {
     fn block_hash(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockHash>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockHash>> + Send + '_>> {
         Box::pin(async move {
             self.provider
                 .get_block_by_number(number)
@@ -526,7 +526,7 @@ impl ResolverApi for GethNodeResolver {
     fn block_timestamp(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockTimestamp>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockTimestamp>> + Send + '_>> {
         Box::pin(async move {
             self.provider
                 .get_block_by_number(number)
@@ -538,7 +538,7 @@ impl ResolverApi for GethNodeResolver {
     }
 
     #[instrument(level = "info", skip_all, fields(geth_node_id = self.id))]
-    fn last_block_number(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockNumber>> + '_>> {
+    fn last_block_number(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<BlockNumber>> + Send + '_>> {
         Box::pin(async move { self.provider.get_block_number().await.map_err(Into::into) })
     }
 }

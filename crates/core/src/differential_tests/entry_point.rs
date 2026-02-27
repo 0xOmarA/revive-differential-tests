@@ -15,9 +15,11 @@ use anyhow::Context as _;
 use futures::StreamExt;
 use indexmap::IndexMap;
 use revive_dt_common::types::PrivateKeyAllocator;
-use revive_dt_core::Platform;
 use revive_dt_format::corpus::Corpus;
-use tokio::sync::{Mutex, Notify, RwLock, Semaphore};
+use tokio::{
+    sync::{Mutex, Notify, RwLock, Semaphore},
+    task::JoinSet,
+};
 use tracing::{Instrument, error, info, info_span, instrument};
 
 use revive_dt_config::{Context, OutputFormat, Test};
@@ -80,7 +82,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
         .platforms
         .iter()
         .copied()
-        .map(Into::<&dyn Platform>::into)
+        .map(revive_dt_core::platform_from_identifier)
         .collect::<Vec<_>>();
 
     // Starting the nodes of the various platforms specified in the context.
@@ -91,7 +93,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
             let platform_identifier = platform.platform_identifier();
 
             let context = Context::Test(Box::new(context.clone()));
-            let node_pool = NodePool::new(context, *platform)
+            let node_pool = NodePool::new(context, platform.as_ref())
                 .await
                 .inspect_err(|err| {
                     error!(
@@ -102,7 +104,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
                 })
                 .context("Failed to initialize the node pool")?;
 
-            map.insert(platform_identifier, (*platform, node_pool));
+            map.insert(platform_identifier, (platform.clone(), node_pool));
         }
 
         map
@@ -141,7 +143,9 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
         context.wallet.highest_private_key_exclusive(),
     )));
 
-    // Creating the driver and executing all of the steps.
+    // Creating the driver and executing all of the steps. Each test is spawned as a separate
+    // tokio task via `tokio::spawn`, enabling true parallelism across worker threads (as opposed
+    // to cooperative concurrency on a single task with `join_all`).
     let semaphore = context
         .concurrency
         .concurrency_limit()
@@ -150,131 +154,41 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
     let running_task_list = Arc::new(RwLock::new(BTreeSet::<usize>::new()));
     let fail_fast_triggered = Arc::new(AtomicBool::new(false));
     let fail_fast_notify = Arc::new(Notify::new());
-    let driver_task = futures::future::join_all(test_definitions.iter().enumerate().map(
-        |(test_id, test_definition)| {
-            let running_task_list = running_task_list.clone();
-            let semaphore = semaphore.clone();
-            let fail_fast_triggered = fail_fast_triggered.clone();
-            let fail_fast_notify = fail_fast_notify.clone();
-            let fail_fast = context.fail_fast.fail_fast;
+    let fail_fast = context.fail_fast.fail_fast;
 
-            let private_key_allocator = private_key_allocator.clone();
-            let cached_compiler = cached_compiler.clone();
-            let mode = test_definition.mode.clone();
-            let span = info_span!(
-                "Executing Test Case",
+    let mut join_set = JoinSet::new();
+    for (test_id, test_definition) in test_definitions.into_iter().enumerate() {
+        let running_task_list = running_task_list.clone();
+        let semaphore = semaphore.clone();
+        let fail_fast_triggered = fail_fast_triggered.clone();
+        let fail_fast_notify = fail_fast_notify.clone();
+
+        let private_key_allocator = private_key_allocator.clone();
+        let cached_compiler = cached_compiler.clone();
+        let mode = test_definition.mode.clone();
+        let span = info_span!(
+            "Executing Test Case",
+            test_id,
+            metadata_file_path = %test_definition.metadata_file_path.display(),
+            case_idx = %test_definition.case_idx,
+            mode = %mode,
+        );
+        join_set.spawn(
+            run_single_test(
                 test_id,
-                metadata_file_path = %test_definition.metadata_file_path.display(),
-                case_idx = %test_definition.case_idx,
-                mode = %mode,
-            );
-            async move {
-                let mut fail_fast_guard = FailFastGuard {
-                    reporter: fail_fast.then(|| test_definition.reporter.clone()),
-                };
+                test_definition,
+                private_key_allocator,
+                cached_compiler,
+                running_task_list,
+                semaphore,
+                fail_fast_triggered,
+                fail_fast_notify,
+                fail_fast,
+            )
+            .instrument(span),
+        );
+    }
 
-                if fail_fast && fail_fast_triggered.load(Ordering::Acquire) {
-                    test_definition
-                        .reporter
-                        .report_test_ignored_event(
-                            "Skipped due to fail-fast: a prior test failed".to_string(),
-                            IndexMap::new(),
-                        )
-                        .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
-                    fail_fast_guard.reported();
-                    return;
-                }
-
-                let permit = match semaphore.as_ref() {
-                    Some(semaphore) => match semaphore.acquire().await {
-                        Ok(permit) => Some(permit),
-                        Err(_) => {
-                            test_definition
-                                .reporter
-                                .report_test_ignored_event(
-                                    "Skipped due to fail-fast: a prior test failed".to_string(),
-                                    IndexMap::new(),
-                                )
-                                .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
-                            fail_fast_guard.reported();
-                            return;
-                        }
-                    },
-                    None => None,
-                };
-
-                if fail_fast && fail_fast_triggered.load(Ordering::Acquire) {
-                    test_definition
-                        .reporter
-                        .report_test_ignored_event(
-                            "Skipped due to fail-fast: a prior test failed".to_string(),
-                            IndexMap::new(),
-                        )
-                        .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
-                    fail_fast_guard.reported();
-                    drop(permit);
-                    return;
-                }
-
-                running_task_list.write().await.insert(test_id);
-                let driver = match Driver::new_root(
-                    test_definition,
-                    private_key_allocator,
-                    &cached_compiler,
-                )
-                .await
-                {
-                    Ok(driver) => driver,
-                    Err(error) => {
-                        test_definition
-                            .reporter
-                            .report_test_failed_event(format!("{error:#}"))
-                            .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
-                        fail_fast_guard.reported();
-                        if fail_fast {
-                            fail_fast_triggered.store(true, Ordering::Release);
-                            if let Some(ref sem) = semaphore {
-                                sem.close();
-                            }
-                            fail_fast_notify.notify_one();
-                        }
-                        error!("Test Case Failed");
-                        drop(permit);
-                        running_task_list.write().await.remove(&test_id);
-                        return;
-                    }
-                };
-                info!("Created the driver for the test case");
-
-                match driver.execute_all().await {
-                    Ok(steps_executed) => {
-                        let _ = test_definition
-                            .reporter
-                            .report_test_succeeded_event(steps_executed);
-                    }
-                    Err(error) => {
-                        test_definition
-                            .reporter
-                            .report_test_failed_event(format!("{error:#}"))
-                            .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
-                        if fail_fast {
-                            fail_fast_triggered.store(true, Ordering::Release);
-                            if let Some(ref sem) = semaphore {
-                                sem.close();
-                            }
-                            fail_fast_notify.notify_one();
-                        }
-                        error!("Test Case Failed");
-                    }
-                };
-                fail_fast_guard.reported();
-                info!("Finished the execution of the test case");
-                drop(permit);
-                running_task_list.write().await.remove(&test_id);
-            }
-            .instrument(span)
-        },
-    ));
     let cli_reporting_task = tokio::spawn(start_cli_reporting_task(
         context.output_format.output_format,
         reporter,
@@ -293,17 +207,26 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
         }
     });
 
-    if context.fail_fast.fail_fast {
-        tokio::pin!(driver_task);
-        tokio::select! {
-            biased;
-            _ = fail_fast_notify.notified() => {
-                info!("Fail-fast triggered, aborting remaining tests");
+    if fail_fast {
+        loop {
+            tokio::select! {
+                biased;
+                _ = fail_fast_notify.notified() => {
+                    info!("Fail-fast triggered, aborting remaining tests");
+                    join_set.abort_all();
+                    // Drain remaining tasks so their FailFastGuards fire
+                    while join_set.join_next().await.is_some() {}
+                    break;
+                }
+                result = join_set.join_next() => {
+                    if result.is_none() {
+                        break; // All tasks completed
+                    }
+                }
             }
-            _ = &mut driver_task => {}
         }
     } else {
-        driver_task.await;
+        while join_set.join_next().await.is_some() {}
     }
 
     info!("Finished executing all test cases");
@@ -317,6 +240,118 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
     }
 
     Ok(())
+}
+
+/// Executes a single test case on its own tokio task. Returns a boxed future with explicit
+/// `Send` bound to avoid the Rust compiler's HRTB inference issues with `async fn` that
+/// internally create references (from Arc derefs, etc.) across `.await` points.
+#[allow(clippy::too_many_arguments)]
+fn run_single_test(
+    test_id: usize,
+    test_definition: crate::helpers::TestDefinition,
+    private_key_allocator: Arc<Mutex<PrivateKeyAllocator>>,
+    cached_compiler: Arc<CachedCompiler>,
+    running_task_list: Arc<RwLock<BTreeSet<usize>>>,
+    semaphore: Option<Arc<Semaphore>>,
+    fail_fast_triggered: Arc<AtomicBool>,
+    fail_fast_notify: Arc<Notify>,
+    fail_fast: bool,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(async move {
+        // Clone the reporter upfront since test_definition will be moved into Driver::new_root.
+        let reporter = test_definition.reporter.clone();
+
+        let mut fail_fast_guard = FailFastGuard {
+            reporter: fail_fast.then(|| reporter.clone()),
+        };
+
+        if fail_fast && fail_fast_triggered.load(Ordering::Acquire) {
+            reporter
+                .report_test_ignored_event(
+                    "Skipped due to fail-fast: a prior test failed".to_string(),
+                    IndexMap::new(),
+                )
+                .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
+            fail_fast_guard.reported();
+            return;
+        }
+
+        let permit = match semaphore.as_ref() {
+            Some(semaphore) => match semaphore.acquire().await {
+                Ok(permit) => Some(permit),
+                Err(_) => {
+                    reporter
+                        .report_test_ignored_event(
+                            "Skipped due to fail-fast: a prior test failed".to_string(),
+                            IndexMap::new(),
+                        )
+                        .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
+                    fail_fast_guard.reported();
+                    return;
+                }
+            },
+            None => None,
+        };
+
+        if fail_fast && fail_fast_triggered.load(Ordering::Acquire) {
+            reporter
+                .report_test_ignored_event(
+                    "Skipped due to fail-fast: a prior test failed".to_string(),
+                    IndexMap::new(),
+                )
+                .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
+            fail_fast_guard.reported();
+            drop(permit);
+            return;
+        }
+
+        running_task_list.write().await.insert(test_id);
+        let driver =
+            match Driver::new_root(test_definition, private_key_allocator, cached_compiler).await {
+                Ok(driver) => driver,
+                Err(error) => {
+                    reporter
+                        .report_test_failed_event(format!("{error:#}"))
+                        .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
+                    fail_fast_guard.reported();
+                    if fail_fast {
+                        fail_fast_triggered.store(true, Ordering::Release);
+                        if let Some(ref sem) = semaphore {
+                            sem.close();
+                        }
+                        fail_fast_notify.notify_one();
+                    }
+                    error!("Test Case Failed");
+                    drop(permit);
+                    running_task_list.write().await.remove(&test_id);
+                    return;
+                }
+            };
+        info!("Created the driver for the test case");
+
+        match driver.execute_all().await {
+            Ok(steps_executed) => {
+                let _ = reporter.report_test_succeeded_event(steps_executed);
+            }
+            Err(error) => {
+                reporter
+                    .report_test_failed_event(format!("{error:#}"))
+                    .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
+                if fail_fast {
+                    fail_fast_triggered.store(true, Ordering::Release);
+                    if let Some(ref sem) = semaphore {
+                        sem.close();
+                    }
+                    fail_fast_notify.notify_one();
+                }
+                error!("Test Case Failed");
+            }
+        };
+        fail_fast_guard.reported();
+        info!("Finished the execution of the test case");
+        drop(permit);
+        running_task_list.write().await.remove(&test_id);
+    }) // end Box::pin(async move { ... })
 }
 
 #[allow(irrefutable_let_patterns, clippy::uninlined_format_args)]

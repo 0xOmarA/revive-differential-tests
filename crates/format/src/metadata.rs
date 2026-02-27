@@ -274,7 +274,7 @@ impl Metadata {
     /// we wish to compile since this is a self-contained test. Otherwise, if it's a JSON file
     /// then we need to compile all of the contracts that are in the directory since imports are
     /// allowed in there.
-    pub fn files_to_compile(&self) -> anyhow::Result<Box<dyn Iterator<Item = PathBuf>>> {
+    pub fn files_to_compile(&self) -> anyhow::Result<Box<dyn Iterator<Item = PathBuf> + Send>> {
         let Some(ref metadata_file_path) = self.file_path else {
             anyhow::bail!("The metadata file path is not defined");
         };

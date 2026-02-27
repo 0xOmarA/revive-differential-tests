@@ -112,7 +112,7 @@ impl SolidityCompiler for Solc {
             libraries,
             revert_string_handling,
         }: CompilerInput,
-    ) -> Pin<Box<dyn Future<Output = Result<CompilerOutput>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<CompilerOutput>> + Send + '_>> {
         Box::pin(async move {
             // Be careful to entirely omit the viaIR field if the compiler does not support it,
             // as it will error if you provide fields it does not know about. Because

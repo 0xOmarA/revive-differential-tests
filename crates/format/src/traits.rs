@@ -11,15 +11,15 @@ use crate::metadata::{ContractIdent, ContractInstance};
 
 /// A trait of the interface are required to implement to be used by the resolution logic that this
 /// crate implements to go from string calldata and into the bytes calldata.
-pub trait ResolverApi {
+pub trait ResolverApi: Send + Sync {
     /// Returns the ID of the chain that the node is on.
-    fn chain_id(&self) -> Pin<Box<dyn Future<Output = Result<ChainId>> + '_>>;
+    fn chain_id(&self) -> Pin<Box<dyn Future<Output = Result<ChainId>> + Send + '_>>;
 
     /// Returns the gas price for the specified transaction.
     fn transaction_gas_price(
         &self,
         tx_hash: TxHash,
-    ) -> Pin<Box<dyn Future<Output = Result<u128>> + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<u128>> + Send + '_>>;
 
     // TODO: This is currently a u128 due to substrate needing more than 64 bits for its gas limit
     // when we implement the changes to the gas we need to adjust this to be a u64.
@@ -27,40 +27,40 @@ pub trait ResolverApi {
     fn block_gas_limit(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = Result<u128>> + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<u128>> + Send + '_>>;
 
     /// Returns the coinbase of the specified block.
     fn block_coinbase(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = Result<Address>> + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Address>> + Send + '_>>;
 
     /// Returns the difficulty of the specified block.
     fn block_difficulty(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = Result<U256>> + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<U256>> + Send + '_>>;
 
     /// Returns the base fee of the specified block.
     fn block_base_fee(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = Result<u64>> + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>>;
 
     /// Returns the hash of the specified block.
     fn block_hash(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = Result<BlockHash>> + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<BlockHash>> + Send + '_>>;
 
     /// Returns the timestamp of the specified block,
     fn block_timestamp(
         &self,
         number: BlockNumberOrTag,
-    ) -> Pin<Box<dyn Future<Output = Result<BlockTimestamp>> + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<BlockTimestamp>> + Send + '_>>;
 
     /// Returns the number of the last block.
-    fn last_block_number(&self) -> Pin<Box<dyn Future<Output = Result<BlockNumber>> + '_>>;
+    fn last_block_number(&self) -> Pin<Box<dyn Future<Output = Result<BlockNumber>> + Send + '_>>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]

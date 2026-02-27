@@ -47,18 +47,18 @@ use crate::{
 static DRIVER_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// The differential tests driver for a single platform.
-pub struct Driver<'a, I> {
+pub struct Driver<I> {
     /// The id of the driver.
     driver_id: usize,
 
     /// The information of the platform that this driver is for.
-    platform_information: &'a TestPlatformInformation<'a>,
+    platform_information: TestPlatformInformation,
 
     /// The resolver of the platform.
-    resolver: Arc<dyn ResolverApi + 'a>,
+    resolver: Arc<dyn ResolverApi>,
 
     /// The definition of the test that the driver is instructed to execute.
-    test_definition: &'a TestDefinition<'a>,
+    test_definition: TestDefinition,
 
     /// The private key allocator used by this driver and other drivers when account allocations are
     /// needed.
@@ -75,7 +75,7 @@ pub struct Driver<'a, I> {
 
     /// A watcher used to watch for the inclusion of transactions in a block, which is better than
     /// polling for their receipts and clogging up the network.
-    inclusion_watcher: &'a InclusionWatcher,
+    inclusion_watcher: Arc<InclusionWatcher>,
 
     /// A map of the gas limit for all of the transactions we have.
     gas_limits: Arc<RwLock<HashMap<StepPath, u64>>>,
@@ -89,31 +89,46 @@ pub struct Driver<'a, I> {
     steps_iterator: I,
 }
 
-impl<'a, I> Driver<'a, I>
+impl<I> Driver<I>
 where
     I: Iterator<Item = (StepPath, Step)>,
 {
     // region:Constructors & Initialization
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
-        platform_information: &'a TestPlatformInformation<'a>,
-        test_definition: &'a TestDefinition<'a>,
+        platform_information: &TestPlatformInformation,
+        test_definition: &TestDefinition,
         private_key_allocator: Arc<Mutex<PrivateKeyAllocator>>,
-        cached_compiler: &CachedCompiler<'a>,
+        cached_compiler: &CachedCompiler,
         watcher_tx: UnboundedSender<WatcherEvent>,
         await_transaction_inclusion: bool,
-        inclusion_watcher: &'a InclusionWatcher,
+        inclusion_watcher: Arc<InclusionWatcher>,
         steps: I,
     ) -> Result<Self> {
+        let owned_platform_information = TestPlatformInformation {
+            platform: platform_information.platform.clone(),
+            node: platform_information.node.clone(),
+            compiler: platform_information.compiler.clone(),
+            reporter: platform_information.reporter.clone(),
+        };
+        let resolver = owned_platform_information
+            .node
+            .resolver()
+            .await
+            .context("Failed to create resolver")?;
         let mut this = Driver {
             driver_id: DRIVER_COUNT.fetch_add(1, Ordering::SeqCst),
-            platform_information,
-            resolver: platform_information
-                .node
-                .resolver()
-                .await
-                .context("Failed to create resolver")?,
-            test_definition,
+            platform_information: owned_platform_information,
+            resolver,
+            test_definition: TestDefinition {
+                metadata: test_definition.metadata.clone(),
+                metadata_file_path: test_definition.metadata_file_path.clone(),
+                mode: test_definition.mode.clone(),
+                case_idx: test_definition.case_idx,
+                case: test_definition.case.clone(),
+                platforms: std::collections::BTreeMap::new(),
+                reporter: test_definition.reporter.clone(),
+            },
             private_key_allocator,
             execution_state: ExecutionState::empty(),
             steps_executed: 0,
@@ -129,15 +144,15 @@ where
         Ok(this)
     }
 
-    async fn init_execution_state(&mut self, cached_compiler: &CachedCompiler<'a>) -> Result<()> {
+    async fn init_execution_state(&mut self, cached_compiler: &CachedCompiler) -> Result<()> {
         let compiler_output = cached_compiler
             .compile_contracts(
-                self.test_definition.metadata,
-                self.test_definition.metadata_file_path,
-                self.test_definition.mode.clone(),
+                &self.test_definition.metadata.content,
+                &self.test_definition.metadata_file_path,
+                &self.test_definition.mode,
                 None,
-                self.platform_information.compiler.as_ref(),
-                self.platform_information.platform,
+                self.platform_information.compiler.clone(),
+                self.platform_information.platform.as_ref(),
                 &self.platform_information.reporter,
             )
             .await
@@ -208,12 +223,12 @@ where
 
         let compiler_output = cached_compiler
             .compile_contracts(
-                self.test_definition.metadata,
-                self.test_definition.metadata_file_path,
-                self.test_definition.mode.clone(),
+                &self.test_definition.metadata.content,
+                &self.test_definition.metadata_file_path,
+                &self.test_definition.mode,
                 deployed_libraries.as_ref(),
-                self.platform_information.compiler.as_ref(),
-                self.platform_information.platform,
+                self.platform_information.compiler.clone(),
+                self.platform_information.platform.as_ref(),
                 &self.platform_information.reporter,
             )
             .await
@@ -483,9 +498,22 @@ where
         let tasks = (0..step.repeat)
             .map(|_| Driver {
                 driver_id: DRIVER_COUNT.fetch_add(1, Ordering::SeqCst),
-                platform_information: self.platform_information,
+                platform_information: TestPlatformInformation {
+                    platform: self.platform_information.platform.clone(),
+                    node: self.platform_information.node.clone(),
+                    compiler: self.platform_information.compiler.clone(),
+                    reporter: self.platform_information.reporter.clone(),
+                },
                 resolver: self.resolver.clone(),
-                test_definition: self.test_definition,
+                test_definition: TestDefinition {
+                    metadata: self.test_definition.metadata.clone(),
+                    metadata_file_path: self.test_definition.metadata_file_path.clone(),
+                    mode: self.test_definition.mode.clone(),
+                    case_idx: self.test_definition.case_idx,
+                    case: self.test_definition.case.clone(),
+                    platforms: std::collections::BTreeMap::new(),
+                    reporter: self.test_definition.reporter.clone(),
+                },
                 private_key_allocator: self.private_key_allocator.clone(),
                 execution_state: self.execution_state.clone(),
                 steps_executed: 0,
@@ -504,7 +532,7 @@ where
                     steps.into_iter()
                 },
                 await_transaction_inclusion: self.await_transaction_inclusion,
-                inclusion_watcher: self.inclusion_watcher,
+                inclusion_watcher: self.inclusion_watcher.clone(),
                 watcher_tx: self.watcher_tx.clone(),
                 gas_limits: self.gas_limits.clone(),
             })
@@ -733,7 +761,7 @@ where
         impl Future<Output = Result<TransactionReceipt>>,
         impl Future<Output = ()>,
     )> {
-        let node = self.platform_information.node;
+        let node = &self.platform_information.node;
         let provider = node.provider().await.context("Creating provider failed")?;
 
         if let Some(step_path) = step_path {
