@@ -632,9 +632,6 @@ pub struct Report {
     pub context: Context,
     /// The list of metadata files that were found by the tool.
     pub metadata_files: BTreeSet<MetadataFilePath>,
-    /// Metrics from the execution.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metrics: Option<Metrics>,
     /// Information relating to each test case.
     pub execution_information: BTreeMap<MetadataFilePath, MetadataFileReport>,
 }
@@ -643,7 +640,6 @@ impl Report {
     pub fn new(context: Context) -> Self {
         Self {
             context,
-            metrics: Default::default(),
             metadata_files: Default::default(),
             execution_information: Default::default(),
         }
@@ -652,9 +648,6 @@ impl Report {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct MetadataFileReport {
-    /// Metrics from the execution.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metrics: Option<Metrics>,
     /// The report of each case keyed by the case idx.
     pub case_reports: BTreeMap<CaseIdx, CaseReport>,
 }
@@ -662,9 +655,6 @@ pub struct MetadataFileReport {
 #[serde_as]
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct CaseReport {
-    /// Metrics from the execution.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metrics: Option<Metrics>,
     /// The [`ExecutionReport`] for each one of the [`Mode`]s.
     #[serde_as(as = "HashMap<DisplayFromStr, _>")]
     pub mode_execution_reports: HashMap<Mode, ExecutionReport>,
