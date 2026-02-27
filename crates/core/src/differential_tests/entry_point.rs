@@ -312,9 +312,9 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
         .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
     drop(reporter_clone);
 
-    cli_reporting_task
-        .await
-        .expect("CLI reporting task panicked");
+    if let Err(e) = cli_reporting_task.await {
+        tracing::warn!("CLI reporting task panicked: {e:?}");
+    }
 
     Ok(())
 }

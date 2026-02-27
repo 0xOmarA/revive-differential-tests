@@ -298,7 +298,9 @@ impl LighthouseGethNode {
         .context("Failed to spawn the kurtosis enclave")
         .inspect_err(|err| {
             tracing::error!(?err, "Failed to spawn Kurtosis");
-            self.shutdown().expect("Failed to shutdown kurtosis");
+            if let Err(e) = self.shutdown() {
+                tracing::warn!("Failed to shutdown kurtosis during error cleanup: {e:?}");
+            }
         })?;
         self.process = Some(process);
 

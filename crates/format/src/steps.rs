@@ -450,13 +450,15 @@ impl StepAddress {
     ) -> anyhow::Result<Address> {
         match self {
             StepAddress::Address(address) => Ok(*address),
-            StepAddress::ResolvableAddress(address) => Ok(Address::from_slice(
-                Calldata::new_compound([address])
+            StepAddress::ResolvableAddress(address) => {
+                let data = Calldata::new_compound([address])
                     .calldata(resolver, context)
-                    .await?
+                    .await?;
+                let bytes = data
                     .get(12..32)
-                    .expect("Can't fail"),
-            )),
+                    .context("Resolved calldata too short to extract address")?;
+                Ok(Address::from_slice(bytes))
+            }
         }
     }
 }

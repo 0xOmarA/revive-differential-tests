@@ -332,7 +332,7 @@ impl PolkadotOmnichainNode {
         let existing_chainspec_balances =
             chainspec_json["genesis"]["runtimeGenesis"]["patch"]["balances"]["balances"]
                 .as_array_mut()
-                .expect("Can't fail");
+                .context("Chainspec JSON missing expected balances array")?;
 
         for address in NetworkWallet::<Ethereum>::signer_addresses(wallet) {
             let substrate_address = eth_to_substrate_address(&address);
