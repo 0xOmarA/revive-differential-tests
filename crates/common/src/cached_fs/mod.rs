@@ -5,11 +5,12 @@ use std::fs;
 use std::io::{Error, Result};
 use std::path::{Path, PathBuf};
 
+use std::sync::LazyLock;
+
 use moka::sync::Cache;
-use once_cell::sync::Lazy;
 
 pub fn read(path: impl AsRef<Path>) -> Result<Vec<u8>> {
-    static READ_CACHE: Lazy<Cache<PathBuf, Vec<u8>>> = Lazy::new(|| Cache::new(10_000));
+    static READ_CACHE: LazyLock<Cache<PathBuf, Vec<u8>>> = LazyLock::new(|| Cache::new(10_000));
 
     let path = path.as_ref().canonicalize()?;
     match READ_CACHE.get(path.as_path()) {
@@ -33,7 +34,7 @@ pub fn read_to_string(path: impl AsRef<Path>) -> Result<String> {
 }
 
 pub fn read_dir(path: impl AsRef<Path>) -> Result<Box<dyn Iterator<Item = Result<PathBuf>>>> {
-    static READ_DIR_CACHE: Lazy<Cache<PathBuf, Vec<PathBuf>>> = Lazy::new(|| Cache::new(10_000));
+    static READ_DIR_CACHE: LazyLock<Cache<PathBuf, Vec<PathBuf>>> = LazyLock::new(|| Cache::new(10_000));
 
     let path = path.as_ref().canonicalize()?;
     match READ_DIR_CACHE.get(path.as_path()) {

@@ -5724,7 +5724,6 @@ dependencies = [
  "anyhow",
  "clap",
  "moka",
- "once_cell",
  "regex",
  "schemars 1.2.0",
  "semver 1.0.27",
