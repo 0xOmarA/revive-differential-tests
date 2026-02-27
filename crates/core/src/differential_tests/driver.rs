@@ -515,14 +515,17 @@ where
         };
 
         // Handling the return data variable assignments.
-        for (variable_name, output_word) in assignments.return_data.iter().zip(
-            tracing_result
-                .output
-                .as_ref()
-                .unwrap_or_default()
-                .to_vec()
-                .chunks(32),
-        ) {
+        let output_bytes = tracing_result.output.as_ref().unwrap_or_default().to_vec();
+        let output_chunks: Vec<_> = output_bytes.chunks(32).collect();
+        if output_chunks.len() < assignments.return_data.len() {
+            tracing::warn!(
+                expected = assignments.return_data.len(),
+                actual = output_chunks.len(),
+                "Output shorter than variable assignment list — some variables will be unassigned"
+            );
+        }
+        for (variable_name, output_word) in assignments.return_data.iter().zip(output_chunks.iter())
+        {
             let value = U256::from_be_slice(output_word);
             self.execution_state
                 .variables

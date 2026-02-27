@@ -169,9 +169,7 @@ where
                 }
             })
             .await
-            .map_err(|_| {
-                TransportErrorKind::custom_str("Timeout when retrying request")
-            })?
+            .map_err(|_| TransportErrorKind::custom_str("Timeout when retrying request"))?
         })
     }
 }

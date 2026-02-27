@@ -379,7 +379,8 @@ mod context {
         pub fn genesis(&self) -> anyhow::Result<&Genesis> {
             static DEFAULT_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
                 let genesis = include_str!("../../../assets/dev-genesis.json");
-                serde_json::from_str(genesis).unwrap()
+                serde_json::from_str(genesis)
+                    .expect("embedded dev-genesis.json is invalid — this is a build-time bug")
             });
 
             match self.genesis.get() {
@@ -425,12 +426,16 @@ mod context {
             self.wallet
                 .get_or_init(|| {
                     let mut wallet = EthereumWallet::new(
-                        PrivateKeySigner::from_bytes(&self.default_private_key).unwrap(),
+                        PrivateKeySigner::from_bytes(&self.default_private_key)
+                            .expect("default private key is invalid"),
                     );
                     for signer in (1..=self.additional_keys)
                         .map(|id| U256::from(id))
                         .map(|id| id.to_be_bytes::<32>())
-                        .map(|id| PrivateKeySigner::from_bytes(&FixedBytes(id)).unwrap())
+                        .map(|id| {
+                            PrivateKeySigner::from_bytes(&FixedBytes(id))
+                                .expect("derived private key is invalid")
+                        })
                     {
                         wallet.register_signer(signer);
                     }
@@ -440,7 +445,7 @@ mod context {
         }
 
         pub fn highest_private_key_exclusive(&self) -> U256 {
-            U256::try_from(self.additional_keys).unwrap()
+            U256::from(self.additional_keys)
         }
     }
 

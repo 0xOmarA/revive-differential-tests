@@ -459,9 +459,7 @@ impl ReportAggregator {
                                 if delta == 0 {
                                     return None;
                                 }
-                                Some(
-                                    block2.ethereum_block_information.mined_gas as u64 / delta,
-                                )
+                                Some(block2.ethereum_block_information.mined_gas as u64 / delta)
                             })
                             .collect::<Vec<_>>();
                         report
