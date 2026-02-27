@@ -31,10 +31,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::{Command, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-    },
+    sync::Arc,
     time::Duration,
 };
 
@@ -65,8 +62,6 @@ use revive_dt_report::{
     EthereumMinedBlockInformation, MinedBlockInformation, SubstrateMinedBlockInformation,
 };
 use serde_json::json;
-use sp_core::crypto::Ss58Codec;
-use sp_runtime::AccountId32;
 use subxt::{OnlineClient, SubstrateConfig};
 use tokio::sync::OnceCell;
 use tracing::instrument;
@@ -75,11 +70,9 @@ use zombienet_sdk::{LocalFileSystem, NetworkConfig, NetworkConfigExt};
 use crate::{
     Node,
     constants::INITIAL_BALANCE,
-    helpers::{Process, ProcessReadinessWaitBehavior},
+    helpers::{Process, allocate_node_id, eth_to_substrate_address, spawn_eth_rpc_proxy},
     provider_utils::{ConcreteProvider, FallbackGasFiller, construct_concurrency_limited_provider},
 };
-
-static NODE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// A Zombienet network where collator is `polkadot-parachain` node with `eth-rpc` [`ZombieNode`]
 /// abstracts away the details of managing the zombienet network and provides an interface to
@@ -145,7 +138,7 @@ impl ZombienetNode {
         let eth_proxy_binary = context.as_eth_rpc_configuration().path.to_owned();
         let working_directory_path = context.as_working_directory_configuration();
         let zombienet_configuration = context.as_zombienet_configuration();
-        let id = NODE_COUNT.fetch_add(1, Ordering::SeqCst);
+        let id = allocate_node_id();
         let base_directory = working_directory_path
             .working_directory
             .join(Self::BASE_DIRECTORY)
@@ -261,7 +254,7 @@ impl ZombienetNode {
             .context("Failed to find balances array in chainspec")?;
 
         for address in NetworkWallet::<Ethereum>::signer_addresses(&self.wallet) {
-            let substrate_address = Self::eth_to_polkadot_address(&address);
+            let substrate_address = eth_to_substrate_address(&address);
             balances.push(json!((substrate_address, INITIAL_BALANCE)));
         }
 
@@ -326,38 +319,17 @@ impl ZombienetNode {
         );
 
         let eth_rpc_port = Self::ETH_RPC_BASE_PORT + self.id as u16;
-        let node_rpc_url = collator_ws_uri.clone();
 
-        let eth_rpc_process = Process::new(
+        let eth_rpc_process = spawn_eth_rpc_proxy(
             "proxy",
             self.logs_directory.as_path(),
             self.eth_proxy_binary.as_path(),
-            |command, stdout_file, stderr_file| {
-                command
-                    .arg("--dev")
-                    .arg("--node-rpc-url")
-                    .arg(node_rpc_url)
-                    .arg("--rpc-cors")
-                    .arg("all")
-                    .arg("--rpc-max-connections")
-                    .arg(u32::MAX.to_string())
-                    .arg("--rpc-port")
-                    .arg(eth_rpc_port.to_string())
-                    .arg("--index-last-n-blocks")
-                    .arg(100_000u32.to_string())
-                    .arg("--cache-size")
-                    .arg(100_000u32.to_string())
-                    .env("RUST_LOG", self.eth_rpc_logging_level.as_str())
-                    .stdout(stdout_file)
-                    .stderr(stderr_file);
-            },
-            ProcessReadinessWaitBehavior::TimeBoundedWaitFunction {
-                max_wait_duration: Duration::from_secs(30),
-                check_function: Box::new(|_, stderr_line| match stderr_line {
-                    Some(line) => Ok(line.contains(Self::ETH_RPC_READY_MARKER)),
-                    None => Ok(false),
-                }),
-            },
+            eth_rpc_port,
+            &collator_ws_uri,
+            self.eth_rpc_logging_level.as_str(),
+            100_000,
+            &[("--rpc-cors", "all")],
+            Self::ETH_RPC_READY_MARKER,
         );
 
         match eth_rpc_process {
@@ -426,16 +398,6 @@ impl ZombienetNode {
         })
     }
 
-    fn eth_to_polkadot_address(address: &Address) -> String {
-        let eth_bytes = address.0.0;
-
-        let mut padded = [0xEEu8; 32];
-        padded[..20].copy_from_slice(&eth_bytes);
-
-        let account_id = AccountId32::from(padded);
-        account_id.to_ss58check()
-    }
-
     pub fn eth_rpc_version(&self) -> anyhow::Result<String> {
         let output = Command::new(&self.eth_proxy_binary)
             .arg("--version")
@@ -497,7 +459,7 @@ impl ZombienetNode {
                 .expect("Can't fail");
 
         for address in NetworkWallet::<Ethereum>::signer_addresses(wallet) {
-            let substrate_address = Self::eth_to_polkadot_address(&address);
+            let substrate_address = eth_to_substrate_address(&address);
             let balance = INITIAL_BALANCE;
             existing_chainspec_balances.push(json!((substrate_address, balance)));
         }
@@ -1022,7 +984,7 @@ mod tests {
         ];
 
         for eth_addr in eth_addresses {
-            let ss58 = ZombienetNode::eth_to_polkadot_address(&eth_addr.parse().unwrap());
+            let ss58 = eth_to_substrate_address(&eth_addr.parse().unwrap());
 
             println!("Ethereum: {eth_addr} -> Polkadot SS58: {ss58}");
         }
@@ -1051,7 +1013,7 @@ mod tests {
         ];
 
         for (eth_addr, expected_ss58) in cases {
-            let result = ZombienetNode::eth_to_polkadot_address(&eth_addr.parse().unwrap());
+            let result = eth_to_substrate_address(&eth_addr.parse().unwrap());
             assert_eq!(
                 result, expected_ss58,
                 "Mismatch for Ethereum address {eth_addr}"

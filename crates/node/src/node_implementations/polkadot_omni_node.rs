@@ -3,10 +3,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::{Command, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-    },
+    sync::Arc,
     time::Duration,
 };
 
@@ -33,9 +30,6 @@ use revive_common::EVMVersion;
 use revive_dt_common::fs::clear_directory;
 use revive_dt_format::traits::ResolverApi;
 use serde_json::json;
-use sp_core::crypto::Ss58Codec;
-use sp_runtime::AccountId32;
-
 use revive_dt_config::*;
 use revive_dt_node_interaction::EthereumNode;
 use revive_dt_report::{
@@ -48,11 +42,12 @@ use tracing::{instrument, trace};
 use crate::{
     Node,
     constants::INITIAL_BALANCE,
-    helpers::{Process, ProcessReadinessWaitBehavior},
+    helpers::{
+        Process, ProcessReadinessWaitBehavior, allocate_node_id, eth_to_substrate_address,
+        spawn_eth_rpc_proxy,
+    },
     provider_utils::{ConcreteProvider, FallbackGasFiller, construct_concurrency_limited_provider},
 };
-
-static NODE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// The number of blocks that should be cached by the polkadot-omni-node and the eth-rpc.
 const NUMBER_OF_CACHED_BLOCKS: u32 = 100_000;
@@ -130,7 +125,7 @@ impl PolkadotOmnichainNode {
         let eth_rpc_path = context.as_eth_rpc_configuration().path.as_path();
         let wallet = context.as_wallet_configuration().wallet();
 
-        let id = NODE_COUNT.fetch_add(1, Ordering::SeqCst);
+        let id = allocate_node_id();
         let base_directory = working_directory_path
             .join(Self::BASE_DIRECTORY)
             .join(id.to_string());
@@ -273,34 +268,16 @@ impl PolkadotOmnichainNode {
             }
         }
 
-        let eth_rpc_process = Process::new(
+        let eth_rpc_process = spawn_eth_rpc_proxy(
             "eth-rpc",
             self.logs_directory_path.as_path(),
             self.eth_rpc_binary_path.as_path(),
-            |command, stdout_file, stderr_file| {
-                command
-                    .arg("--dev")
-                    .arg("--rpc-port")
-                    .arg(eth_rpc_port.to_string())
-                    .arg("--node-rpc-url")
-                    .arg(format!("ws://127.0.0.1:{polkadot_omnichain_node_rpc_port}"))
-                    .arg("--rpc-max-connections")
-                    .arg(u32::MAX.to_string())
-                    .arg("--index-last-n-blocks")
-                    .arg(NUMBER_OF_CACHED_BLOCKS.to_string())
-                    .arg("--cache-size")
-                    .arg(NUMBER_OF_CACHED_BLOCKS.to_string())
-                    .env("RUST_LOG", self.eth_rpc_logging_level.as_str())
-                    .stdout(stdout_file)
-                    .stderr(stderr_file);
-            },
-            ProcessReadinessWaitBehavior::TimeBoundedWaitFunction {
-                max_wait_duration: Duration::from_secs(30),
-                check_function: Box::new(|_, stderr_line| match stderr_line {
-                    Some(line) => Ok(line.contains(Self::ETH_RPC_READY_MARKER)),
-                    None => Ok(false),
-                }),
-            },
+            eth_rpc_port,
+            &format!("ws://127.0.0.1:{polkadot_omnichain_node_rpc_port}"),
+            self.eth_rpc_logging_level.as_str(),
+            NUMBER_OF_CACHED_BLOCKS,
+            &[],
+            Self::ETH_RPC_READY_MARKER,
         );
         match eth_rpc_process {
             Ok(process) => self.eth_rpc_process = Some(process),
@@ -313,16 +290,6 @@ impl PolkadotOmnichainNode {
         }
 
         Ok(())
-    }
-
-    fn eth_to_substrate_address(address: &Address) -> String {
-        let eth_bytes = address.0.0;
-
-        let mut padded = [0xEEu8; 32];
-        padded[..20].copy_from_slice(&eth_bytes);
-
-        let account_id = AccountId32::from(padded);
-        account_id.to_ss58check()
     }
 
     pub fn eth_rpc_version(&self) -> anyhow::Result<String> {
@@ -371,7 +338,7 @@ impl PolkadotOmnichainNode {
                 .expect("Can't fail");
 
         for address in NetworkWallet::<Ethereum>::signer_addresses(wallet) {
-            let substrate_address = Self::eth_to_substrate_address(&address);
+            let substrate_address = eth_to_substrate_address(&address);
             let balance = INITIAL_BALANCE;
             existing_chainspec_balances.push(json!((substrate_address, balance)));
         }

@@ -15,10 +15,7 @@ use std::{
     path::PathBuf,
     pin::Pin,
     process::{Command, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-    },
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -58,11 +55,9 @@ use revive_dt_report::{EthereumMinedBlockInformation, MinedBlockInformation};
 use crate::{
     Node,
     constants::{CHAIN_ID, INITIAL_BALANCE},
-    helpers::{Process, ProcessReadinessWaitBehavior},
+    helpers::{Process, ProcessReadinessWaitBehavior, allocate_node_id},
     provider_utils::{ConcreteProvider, FallbackGasFiller, construct_concurrency_limited_provider},
 };
-
-static NODE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// The go-ethereum node instance implementation.
 ///
@@ -129,7 +124,7 @@ impl LighthouseGethNode {
             .working_directory
             .as_path()
             .join(Self::BASE_DIRECTORY);
-        let id = NODE_COUNT.fetch_add(1, Ordering::SeqCst);
+        let id = allocate_node_id();
         let base_directory = geth_directory.join(id.to_string());
 
         let wallet = wallet_configuration.wallet();

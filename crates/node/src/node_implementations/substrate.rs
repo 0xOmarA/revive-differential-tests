@@ -3,10 +3,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::{Command, Stdio},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU32, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -33,9 +30,6 @@ use revive_common::EVMVersion;
 use revive_dt_common::fs::clear_directory;
 use revive_dt_format::traits::ResolverApi;
 use serde_json::{Value, json};
-use sp_core::crypto::Ss58Codec;
-use sp_runtime::AccountId32;
-
 use revive_dt_config::*;
 use revive_dt_node_interaction::EthereumNode;
 use revive_dt_report::{
@@ -48,11 +42,12 @@ use tracing::{instrument, trace};
 use crate::{
     Node,
     constants::INITIAL_BALANCE,
-    helpers::{Process, ProcessReadinessWaitBehavior},
+    helpers::{
+        Process, ProcessReadinessWaitBehavior, allocate_node_id, eth_to_substrate_address,
+        spawn_eth_rpc_proxy,
+    },
     provider_utils::{ConcreteProvider, FallbackGasFiller, construct_concurrency_limited_provider},
 };
-
-static NODE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// The number of blocks that should be cached by the revive-dev-node and the eth-rpc.
 const NUMBER_OF_CACHED_BLOCKS: u32 = 100_000;
@@ -113,7 +108,7 @@ impl SubstrateNode {
         let wallet = context.as_wallet_configuration().wallet();
 
         let substrate_directory = working_directory_path.join(Self::BASE_DIRECTORY);
-        let id = NODE_COUNT.fetch_add(1, Ordering::SeqCst);
+        let id = allocate_node_id();
         let base_directory = substrate_directory.join(id.to_string());
         let logs_directory = base_directory.join(Self::LOGS_DIRECTORY);
 
@@ -257,34 +252,16 @@ impl SubstrateNode {
         }
 
         trace!("Spawning eth-rpc process");
-        let eth_proxy_process = Process::new(
+        let eth_proxy_process = spawn_eth_rpc_proxy(
             "proxy",
             self.logs_directory.as_path(),
             self.eth_proxy_binary.as_path(),
-            |command, stdout_file, stderr_file| {
-                command
-                    .arg("--dev")
-                    .arg("--rpc-port")
-                    .arg(proxy_rpc_port.to_string())
-                    .arg("--node-rpc-url")
-                    .arg(format!("ws://127.0.0.1:{substrate_rpc_port}"))
-                    .arg("--rpc-max-connections")
-                    .arg(u32::MAX.to_string())
-                    .arg("--index-last-n-blocks")
-                    .arg(NUMBER_OF_CACHED_BLOCKS.to_string())
-                    .arg("--cache-size")
-                    .arg(NUMBER_OF_CACHED_BLOCKS.to_string())
-                    .env("RUST_LOG", self.eth_rpc_logging_level.as_str())
-                    .stdout(stdout_file)
-                    .stderr(stderr_file);
-            },
-            ProcessReadinessWaitBehavior::TimeBoundedWaitFunction {
-                max_wait_duration: Duration::from_secs(30),
-                check_function: Box::new(|_, stderr_line| match stderr_line {
-                    Some(line) => Ok(line.contains(Self::ETH_PROXY_READY_MARKER)),
-                    None => Ok(false),
-                }),
-            },
+            proxy_rpc_port,
+            &format!("ws://127.0.0.1:{substrate_rpc_port}"),
+            self.eth_rpc_logging_level.as_str(),
+            NUMBER_OF_CACHED_BLOCKS,
+            &[],
+            Self::ETH_PROXY_READY_MARKER,
         );
         match eth_proxy_process {
             Ok(process) => self.eth_proxy_process = Some(process),
@@ -297,16 +274,6 @@ impl SubstrateNode {
         }
 
         Ok(())
-    }
-
-    fn eth_to_substrate_address(address: &Address) -> String {
-        let eth_bytes = address.0.0;
-
-        let mut padded = [0xEEu8; 32];
-        padded[..20].copy_from_slice(&eth_bytes);
-
-        let account_id = AccountId32::from(padded);
-        account_id.to_ss58check()
     }
 
     pub fn eth_rpc_version(&self) -> anyhow::Result<String> {
@@ -374,7 +341,7 @@ impl SubstrateNode {
 
         trace!("Adding addresses to chainspec");
         for address in NetworkWallet::<Ethereum>::signer_addresses(wallet) {
-            let substrate_address = Self::eth_to_substrate_address(&address);
+            let substrate_address = eth_to_substrate_address(&address);
             let balance = INITIAL_BALANCE;
             existing_chainspec_balances.push(json!((substrate_address, balance)));
         }
@@ -927,10 +894,10 @@ mod tests {
         let contents = fs::read_to_string(&final_chainspec_path).expect("Failed to read chainspec");
 
         // Validate that the Substrate addresses derived from the Ethereum addresses are in the file
-        let first_eth_addr = SubstrateNode::eth_to_substrate_address(
+        let first_eth_addr = eth_to_substrate_address(
             &"90F8bf6A479f320ead074411a4B0e7944Ea8c9C1".parse().unwrap(),
         );
-        let second_eth_addr = SubstrateNode::eth_to_substrate_address(
+        let second_eth_addr = eth_to_substrate_address(
             &"Ab8483F64d9C6d1EcF9b849Ae677dD3315835cb2".parse().unwrap(),
         );
 
@@ -954,7 +921,7 @@ mod tests {
         ];
 
         for eth_addr in eth_addresses {
-            let ss58 = SubstrateNode::eth_to_substrate_address(&eth_addr.parse().unwrap());
+            let ss58 = eth_to_substrate_address(&eth_addr.parse().unwrap());
 
             println!("Ethereum: {eth_addr} -> Substrate SS58: {ss58}");
         }
@@ -983,7 +950,7 @@ mod tests {
         ];
 
         for (eth_addr, expected_ss58) in cases {
-            let result = SubstrateNode::eth_to_substrate_address(&eth_addr.parse().unwrap());
+            let result = eth_to_substrate_address(&eth_addr.parse().unwrap());
             assert_eq!(
                 result, expected_ss58,
                 "Mismatch for Ethereum address {eth_addr}"
