@@ -35,7 +35,7 @@ pub async fn download_solc(
     } else if cfg!(target_os = "windows") {
         SolcDownloader::windows(version).await
     } else {
-        unimplemented!()
+        anyhow::bail!("Unsupported operating system for solc binary download")
     }
     .context("Failed to initialize the Solc Downloader")?;
 

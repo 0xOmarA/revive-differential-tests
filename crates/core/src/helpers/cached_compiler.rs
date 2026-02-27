@@ -150,7 +150,7 @@ impl<'a> CachedCompiler<'a> {
                                     None,
                                     cache_value.compiler_output.clone(),
                                 )
-                                .expect("Can't happen");
+                                .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
                         } else {
                             reporter
                                 .report_pre_link_contracts_compilation_succeeded_event(
@@ -160,7 +160,7 @@ impl<'a> CachedCompiler<'a> {
                                     None,
                                     cache_value.compiler_output.clone(),
                                 )
-                                .expect("Can't happen");
+                                .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
                         }
                         cache_value.compiler_output
                     }
@@ -247,7 +247,7 @@ async fn compile_contracts(
                     input,
                     output.clone(),
                 )
-                .expect("Can't happen");
+                .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
         }
         (Ok(output), false) => {
             reporter
@@ -258,7 +258,7 @@ async fn compile_contracts(
                     input,
                     output.clone(),
                 )
-                .expect("Can't happen");
+                .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
         }
         (Err(err), true) => {
             reporter
@@ -268,7 +268,7 @@ async fn compile_contracts(
                     input,
                     format!("{err:#}"),
                 )
-                .expect("Can't happen");
+                .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
         }
         (Err(err), false) => {
             reporter
@@ -278,7 +278,7 @@ async fn compile_contracts(
                     input,
                     format!("{err:#}"),
                 )
-                .expect("Can't happen");
+                .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
         }
     }
 

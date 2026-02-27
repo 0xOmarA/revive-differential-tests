@@ -88,7 +88,6 @@ async fn download_to_file(path: &Path, downloader: &SolcDownloader) -> anyhow::R
         .arg(path)
         .stderr(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
         .spawn()
         .with_context(|| {
             format!(

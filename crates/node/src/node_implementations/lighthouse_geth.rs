@@ -841,35 +841,29 @@ impl Node for LighthouseGethNode {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("Failed to spawn the enclave kill command");
+            .context("Failed to spawn the enclave kill command")?;
 
         if !child
             .wait()
-            .expect("Failed to wait for the enclave kill command")
+            .context("Failed to wait for the enclave kill command")?
             .success()
         {
             let stdout = {
                 let mut stdout = String::default();
-                child
-                    .stdout
-                    .take()
-                    .expect("Should be piped")
-                    .read_to_string(&mut stdout)
-                    .context("Failed to read stdout of kurtosis inspect to string")?;
+                if let Some(mut pipe) = child.stdout.take() {
+                    let _ = pipe.read_to_string(&mut stdout);
+                }
                 stdout
             };
             let stderr = {
                 let mut stderr = String::default();
-                child
-                    .stderr
-                    .take()
-                    .expect("Should be piped")
-                    .read_to_string(&mut stderr)
-                    .context("Failed to read stderr of kurtosis inspect to string")?;
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
                 stderr
             };
 
-            panic!(
+            anyhow::bail!(
                 "Failed to shut down the enclave {} - stdout: {stdout}, stderr: {stderr}",
                 self.enclave_name
             )
@@ -905,7 +899,9 @@ impl Node for LighthouseGethNode {
 impl Drop for LighthouseGethNode {
     #[instrument(level = "info", skip_all, fields(lighthouse_node_id = self.id))]
     fn drop(&mut self) {
-        self.shutdown().expect("Failed to shutdown")
+        if let Err(e) = self.shutdown() {
+            tracing::warn!("Failed to shutdown lighthouse geth node: {e:?}");
+        }
     }
 }
 

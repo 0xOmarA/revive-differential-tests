@@ -148,13 +148,15 @@ impl Process {
 
 impl Drop for Process {
     fn drop(&mut self) {
-        self.child.kill().expect("Failed to kill the process");
-        self.stdout_logs_file
-            .flush()
-            .expect("Failed to flush the stdout logs file");
-        self.stderr_logs_file
-            .flush()
-            .expect("Failed to flush the stderr logs file");
+        if let Err(e) = self.child.kill() {
+            tracing::warn!("Failed to kill child process: {e}");
+        }
+        if let Err(e) = self.stdout_logs_file.flush() {
+            tracing::warn!("Failed to flush stdout logs: {e}");
+        }
+        if let Err(e) = self.stderr_logs_file.flush() {
+            tracing::warn!("Failed to flush stderr logs: {e}");
+        }
     }
 }
 

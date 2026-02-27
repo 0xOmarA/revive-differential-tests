@@ -689,15 +689,16 @@ impl EthereumNode for ZombienetNode {
                             BlockNumberOrTag::Number(substrate_block.number() as _),
                         )
                         .await
-                        .expect("TODO: Remove")
-                        .expect("TODO: Remove");
+                        .ok()?
+                        .ok_or_else(|| tracing::warn!("Block not found"))
+                        .ok()?;
 
                     let used = api
                         .storage()
                         .at(substrate_block.reference())
                         .fetch_or_default(&revive::storage().system().block_weight())
                         .await
-                        .expect("TODO: Remove");
+                        .ok()?;
 
                     let block_ref_time = (used.normal.ref_time as u128)
                         + (used.operational.ref_time as u128)
@@ -709,7 +710,7 @@ impl EthereumNode for ZombienetNode {
                     let limits = api
                         .constants()
                         .at(&revive::constants().system().block_weights())
-                        .expect("TODO: Remove");
+                        .ok()?;
 
                     let max_ref_time = limits.max_block.ref_time;
                     let max_proof_size = limits.max_block.proof_size;

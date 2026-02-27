@@ -130,7 +130,11 @@ where
                     let Ok(resp) = service.call(req.clone()).await else {
                         continue;
                     };
-                    let response = resp.as_single().expect("Can't fail");
+                    let Some(response) = resp.as_single() else {
+                        return Err::<ResponsePacket, _>(TransportErrorKind::custom_str(
+                            "Unexpected batch response in retry layer",
+                        ));
+                    };
                     if response.is_error() {
                         continue;
                     }
@@ -145,14 +149,14 @@ where
                             .is_some()
                         || method != "eth_getTransactionReceipt"
                     {
-                        return resp;
+                        return Ok(resp);
                     } else {
                         continue;
                     }
                 }
             })
             .await
-            .map_err(|_| TransportErrorKind::custom_str("Timeout when retrying request"))
+            .map_err(|_| TransportErrorKind::custom_str("Timeout when retrying request"))?
         })
     }
 }

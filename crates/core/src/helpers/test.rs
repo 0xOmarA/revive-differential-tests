@@ -44,7 +44,7 @@ pub async fn create_test_definitions_stream<'a>(
                         metadata_file.metadata_file_path.clone(),
                         metadata_file.content.clone(),
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
             })
             .map(move |(metadata_file, case_idx, case, mode)| {
                 let reporter = reporter.clone();
@@ -64,9 +64,7 @@ pub async fn create_test_definitions_stream<'a>(
             // Inform the reporter of each one of the test cases that were discovered which we expect to
             // run.
             .inspect(|(_, _, _, _, reporter)| {
-                reporter
-                    .report_test_case_discovery_event()
-                    .expect("Can't fail");
+                let _ = reporter.report_test_case_discovery_event();
             }),
     )
     // Creating the Test Definition objects from all of the various objects we have and creating
@@ -94,7 +92,7 @@ pub async fn create_test_definitions_stream<'a>(
                         platform.platform_identifier(),
                         node.connection_string(),
                     )
-                    .expect("Can't fail");
+                    .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
 
                 let reporter =
                     reporter.execution_specific_reporter(node.id(), platform.platform_identifier());
@@ -144,15 +142,14 @@ pub async fn create_test_definitions_stream<'a>(
                         serde_json::to_string(&additional_information).unwrap(),
                     "Ignoring Test Case"
                 );
-                test.reporter
+                let _ = test.reporter
                     .report_test_ignored_event(
                         reason.to_string(),
                         additional_information
                             .into_iter()
                             .map(|(k, v)| (k.into(), v))
                             .collect::<IndexMap<_, _>>(),
-                    )
-                    .expect("Can't fail");
+                    );
                 None
             }
         }

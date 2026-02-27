@@ -29,8 +29,7 @@ impl InclusionWatcher {
         let (tx, rx) = channel::<()>();
         self.channels.insert(tx_hash, tx);
         async move {
-            rx.await
-                .expect("Can't fail since we don't drop the sender side");
+            let _ = rx.await;
         }
     }
 

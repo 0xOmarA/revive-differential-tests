@@ -655,7 +655,9 @@ impl Node for GethNode {
 impl Drop for GethNode {
     #[instrument(level = "info", skip_all, fields(geth_node_id = self.id))]
     fn drop(&mut self) {
-        self.shutdown().expect("Failed to shutdown")
+        if let Err(e) = self.shutdown() {
+            tracing::warn!("Failed to shutdown geth node: {e:?}");
+        }
     }
 }
 

@@ -180,7 +180,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
                             "Skipped due to fail-fast: a prior test failed".to_string(),
                             IndexMap::new(),
                         )
-                        .expect("aggregator task is joined later so the receiver is alive");
+                        .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
                     fail_fast_guard.reported();
                     return;
                 }
@@ -195,7 +195,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
                                     "Skipped due to fail-fast: a prior test failed".to_string(),
                                     IndexMap::new(),
                                 )
-                                .expect("aggregator task is joined later so the receiver is alive");
+                                .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
                             fail_fast_guard.reported();
                             return;
                         }
@@ -210,7 +210,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
                             "Skipped due to fail-fast: a prior test failed".to_string(),
                             IndexMap::new(),
                         )
-                        .expect("aggregator task is joined later so the receiver is alive");
+                        .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
                     fail_fast_guard.reported();
                     drop(permit);
                     return;
@@ -229,7 +229,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
                         test_definition
                             .reporter
                             .report_test_failed_event(format!("{error:#}"))
-                            .expect("Can't fail");
+                            .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
                         fail_fast_guard.reported();
                         if fail_fast {
                             fail_fast_triggered.store(true, Ordering::Relaxed);
@@ -247,15 +247,16 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
                 info!("Created the driver for the test case");
 
                 match driver.execute_all().await {
-                    Ok(steps_executed) => test_definition
-                        .reporter
-                        .report_test_succeeded_event(steps_executed)
-                        .expect("Can't fail"),
+                    Ok(steps_executed) => {
+                        let _ = test_definition
+                            .reporter
+                            .report_test_succeeded_event(steps_executed);
+                    }
                     Err(error) => {
                         test_definition
                             .reporter
                             .report_test_failed_event(format!("{error:#}"))
-                            .expect("Can't fail");
+                            .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
                         if fail_fast {
                             fail_fast_triggered.store(true, Ordering::Relaxed);
                             if let Some(ref sem) = semaphore {
@@ -308,7 +309,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
     info!("Finished executing all test cases");
     reporter_clone
         .report_completion_event()
-        .expect("Can't fail");
+        .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
     drop(reporter_clone);
 
     cli_reporting_task
@@ -320,7 +321,10 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
 
 #[allow(irrefutable_let_patterns, clippy::uninlined_format_args)]
 async fn start_cli_reporting_task(output_format: OutputFormat, reporter: Reporter) {
-    let mut aggregator_events_rx = reporter.subscribe().await.expect("Can't fail");
+    let Ok(mut aggregator_events_rx) = reporter.subscribe().await else {
+        tracing::warn!("Failed to subscribe to reporter events");
+        return;
+    };
     drop(reporter);
 
     let start = Instant::now();
@@ -385,19 +389,18 @@ async fn start_cli_reporting_task(output_format: OutputFormat, reporter: Reporte
                 let _ = writeln!(buf);
             }
             OutputFormat::CargoTestLike => {
-                writeln!(
+                let _ = writeln!(
                     buf,
                     "\t{} {} - {}\n",
                     Color::Green.paint("Running"),
                     metadata_file_path.display(),
                     mode
-                )
-                .unwrap();
+                );
 
                 let mut success_count = 0;
                 let mut failure_count = 0;
                 let mut ignored_count = 0;
-                writeln!(buf, "running {} tests", case_status.len()).unwrap();
+                let _ = writeln!(buf, "running {} tests", case_status.len());
                 for (case_idx, case_result) in case_status.iter() {
                     let status = match case_result {
                         TestCaseStatus::Succeeded { .. } => {
@@ -416,30 +419,29 @@ async fn start_cli_reporting_task(output_format: OutputFormat, reporter: Reporte
                             Color::Yellow.paint(format!("ignored, {reason:?}"))
                         }
                     };
-                    writeln!(buf, "test case_idx_{} ... {}", case_idx, status).unwrap();
+                    let _ = writeln!(buf, "test case_idx_{} ... {}", case_idx, status);
                 }
-                writeln!(buf).unwrap();
+                let _ = writeln!(buf);
 
                 let status = if failure_count > 0 {
                     Color::Red.paint("FAILED")
                 } else {
                     Color::Green.paint("ok")
                 };
-                writeln!(
+                let _ = writeln!(
                     buf,
                     "test result: {}. {} passed; {} failed; {} ignored",
                     status, success_count, failure_count, ignored_count,
-                )
-                .unwrap();
-                writeln!(buf).unwrap();
+                );
+                let _ = writeln!(buf);
 
                 if aggregator_events_rx.is_empty() {
                     buf = tokio::task::spawn_blocking(move || {
-                        buf.flush().unwrap();
+                        let _ = buf.flush();
                         buf
                     })
                     .await
-                    .unwrap();
+                    .unwrap_or(BufWriter::new(stderr()));
                 }
             }
         }
@@ -449,26 +451,24 @@ async fn start_cli_reporting_task(output_format: OutputFormat, reporter: Reporte
     // Summary at the end.
     match output_format {
         OutputFormat::Legacy => {
-            writeln!(
+            let _ = writeln!(
                 buf,
                 "{} cases: {} cases succeeded, {} cases failed in {} seconds",
                 global_success_count + global_failure_count + global_ignore_count,
                 Color::Green.paint(global_success_count.to_string()),
                 Color::Red.paint(global_failure_count.to_string()),
                 start.elapsed().as_secs()
-            )
-            .unwrap();
+            );
         }
         OutputFormat::CargoTestLike => {
-            writeln!(
+            let _ = writeln!(
                 buf,
                 "run finished. {} passed; {} failed; {} ignored; finished in {}s",
                 global_success_count,
                 global_failure_count,
                 global_ignore_count,
                 start.elapsed().as_secs()
-            )
-            .unwrap();
+            );
         }
     }
 }
