@@ -275,14 +275,16 @@ mod context {
         #[clap(default_value = "resolc")]
         pub path: PathBuf,
 
-        /// Specifies the PVM heap size in bytes.
+        /// Specifies the PVM heap size in bytes (minimum 1024).
         ///
-        /// If unspecified, the revive compiler default is used
+        /// If unspecified, the revive compiler default is used.
+        #[arg(value_parser = clap::value_parser!(u32).range(1024..))]
         pub heap_size: Option<u32>,
 
-        /// Specifies the PVM stack size in bytes.
+        /// Specifies the PVM stack size in bytes (minimum 1024).
         ///
-        /// If unspecified, the revive compiler default is used
+        /// If unspecified, the revive compiler default is used.
+        #[arg(value_parser = clap::value_parser!(u32).range(1024..))]
         pub stack_size: Option<u32>,
     }
 
@@ -517,14 +519,15 @@ mod context {
     #[configuration(key = "concurrency")]
     pub struct ConcurrencyConfiguration {
         /// Determines the amount of nodes that will be spawned for each chain.
-        #[clap(default_value_t = 5)]
+        #[clap(default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..))]
         pub number_of_nodes: usize,
 
         /// Determines the amount of tokio worker threads that will will be used.
         #[arg(
             default_value_t = std::thread::available_parallelism()
                 .map(|n| n.get() * 4 / 6)
-                .unwrap_or(1)
+                .unwrap_or(1),
+            value_parser = clap::value_parser!(u64).range(1..),
         )]
         pub number_of_threads: usize,
 
