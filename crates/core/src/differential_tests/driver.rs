@@ -594,7 +594,13 @@ where
         // with an assertion of "check if it succeeded"
         if let Method::Deployer = &step.method {
             for expectation in expectations.iter_mut() {
-                expectation.return_data = None;
+                if expectation.return_data.is_some() {
+                    tracing::warn!(
+                        "Stripping return_data assertion for deployer method — \
+                         deployer returns runtime code, not the contract address"
+                    );
+                    expectation.return_data = None;
+                }
             }
         }
 

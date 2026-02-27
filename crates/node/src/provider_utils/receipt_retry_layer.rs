@@ -5,7 +5,7 @@ use alloy::{
     rpc::json_rpc::{RequestPacket, ResponsePacket},
     transports::{TransportError, TransportErrorKind, TransportFut},
 };
-use tokio::time::{interval, timeout};
+use tokio::time::timeout;
 use tower::{Layer, Service};
 
 /// A layer that allows for automatic retries for getting the receipt.
@@ -121,14 +121,23 @@ where
                 return service.call(req).await;
             }
 
+            let max_delay = Duration::from_secs(5);
+
             timeout(polling_duration, async {
-                let mut interval = interval(polling_interval);
+                let mut delay = polling_interval;
+                let mut retries = 0u32;
 
                 loop {
-                    interval.tick().await;
+                    tokio::time::sleep(delay).await;
+                    retries += 1;
 
-                    let Ok(resp) = service.call(req.clone()).await else {
-                        continue;
+                    let resp = match service.call(req.clone()).await {
+                        Ok(resp) => resp,
+                        Err(e) => {
+                            tracing::warn!(retries, method, "RPC call failed, retrying: {e}");
+                            delay = (delay * 2).min(max_delay);
+                            continue;
+                        }
                     };
                     let Some(response) = resp.as_single() else {
                         return Err::<ResponsePacket, _>(TransportErrorKind::custom_str(
@@ -136,6 +145,8 @@ where
                         ));
                     };
                     if response.is_error() {
+                        tracing::debug!(retries, method, "RPC returned error, retrying");
+                        delay = (delay * 2).min(max_delay);
                         continue;
                     }
 
@@ -151,12 +162,16 @@ where
                     {
                         return Ok(resp);
                     } else {
+                        tracing::debug!(retries, method, "Receipt not yet available, retrying");
+                        delay = (delay * 2).min(max_delay);
                         continue;
                     }
                 }
             })
             .await
-            .map_err(|_| TransportErrorKind::custom_str("Timeout when retrying request"))?
+            .map_err(|_| {
+                TransportErrorKind::custom_str("Timeout when retrying request")
+            })?
         })
     }
 }
