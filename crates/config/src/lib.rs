@@ -23,6 +23,57 @@ use serde::{Deserialize, Serialize, Serializer};
 use strum::{AsRefStr, Display, EnumString, IntoStaticStr};
 use temp_dir::TempDir;
 
+/// The status of a test case in a report expectations file.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    ValueEnum,
+    EnumString,
+)]
+#[strum(serialize_all = "kebab-case")]
+pub enum ReportStatus {
+    Succeeded,
+    Failed,
+    Ignored,
+}
+
+/// Subcommands for report processing.
+#[derive(Clone, Debug, clap::Subcommand, Serialize, Deserialize)]
+pub enum ReportAction {
+    /// Generates an expectation file out of a given report.
+    GenerateExpectationsFile {
+        /// The path of the report's JSON file.
+        #[clap(long)]
+        report_path: PathBuf,
+        /// The path of the output file to generate.
+        #[clap(long)]
+        output_path: PathBuf,
+        /// Prefix paths to remove from the expectations file.
+        #[clap(long)]
+        remove_prefix: Vec<PathBuf>,
+        /// Which test case statuses to include. If not specified, all are included.
+        #[clap(long)]
+        include_status: Option<Vec<ReportStatus>>,
+    },
+    /// Compares two expectation files to ensure they match.
+    CompareExpectationFiles {
+        /// The path of the base expectation file.
+        #[clap(long)]
+        base_expectation_path: PathBuf,
+        /// The path of the other expectation file.
+        #[clap(long)]
+        other_expectation_path: PathBuf,
+    },
+}
+
 /// The CLI for the differential testing and benchmarking framework.
 #[revive_dt_proc_macros::context(
     context_type_ident = "Context",
@@ -96,6 +147,19 @@ mod context {
     /// Exports the JSON schema of the MatterLabs test format used by the tool.
     #[subcommand]
     pub struct ExportJsonSchema;
+
+    /// Processes test reports (generate expectations, compare).
+    #[subcommand]
+    pub struct Report {
+        pub action: ReportActionConfiguration,
+    }
+
+    /// Wraps the report processing subcommand.
+    #[configuration]
+    pub struct ReportActionConfiguration {
+        #[clap(subcommand)]
+        pub action: ReportAction,
+    }
 
     /// Configuration for the commandline profile.
     #[configuration]
@@ -526,6 +590,7 @@ mod context {
                 Context::Benchmark(ctx) => ctx.update_for_profile(),
                 Context::ExportJsonSchema(_) => {}
                 Context::ExportGenesis(_) => {}
+                Context::Report(_) => {}
             }
         }
     }

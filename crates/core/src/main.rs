@@ -1,6 +1,7 @@
 mod differential_benchmarks;
 mod differential_tests;
 mod helpers;
+mod report_processing;
 
 use anyhow::{Context as _, bail};
 use clap::Parser;
@@ -122,6 +123,9 @@ fn main() -> anyhow::Result<()> {
             );
 
             Ok(())
+        }
+        Context::Report(report_context) => {
+            report_processing::handle_report(report_context.action.action)
         }
     }
 }
