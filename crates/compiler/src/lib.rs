@@ -46,6 +46,11 @@ pub trait SolidityCompiler {
         optimizer_setting: ModeOptimizerSetting,
         pipeline: ModePipeline,
     ) -> bool;
+
+    /// Returns the resolc PVM settings (heap_size, stack_size) if this is a resolc compiler.
+    fn resolc_pvm_settings(&self) -> (Option<u32>, Option<u32>) {
+        (None, None)
+    }
 }
 
 /// The generic compilation input configuration.

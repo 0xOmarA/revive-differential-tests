@@ -58,7 +58,7 @@ impl Resolc {
         /// This is a cache of all of the resolc compiler objects. Since we do not currently support
         /// multiple resolc compiler versions, so our cache is just keyed by the solc compiler and
         /// its version to the resolc compiler.
-        static COMPILERS_CACHE: LazyLock<DashMap<Solc, Resolc>> = LazyLock::new(Default::default);
+        static COMPILERS_CACHE: LazyLock<DashMap<(Solc, u32, u32), Resolc>> = LazyLock::new(Default::default);
 
         let resolc_configuration = context.as_resolc_configuration();
         let resolc_path = resolc_configuration.path.clone();
@@ -74,7 +74,7 @@ impl Resolc {
             .context("Failed to create the solc compiler frontend for resolc")?;
 
         Ok(COMPILERS_CACHE
-            .entry(solc.clone())
+            .entry((solc.clone(), pvm_heap_size, pvm_stack_size))
             .or_insert_with(|| {
                 Self(Arc::new(ResolcInner {
                     solc,
@@ -363,5 +363,9 @@ impl SolidityCompiler for Resolc {
     ) -> bool {
         pipeline == ModePipeline::ViaYulIR
             && SolidityCompiler::supports_mode(&self.0.solc, optimize_setting, pipeline)
+    }
+
+    fn resolc_pvm_settings(&self) -> (Option<u32>, Option<u32>) {
+        (Some(self.0.pvm_heap_size), Some(self.0.pvm_stack_size))
     }
 }

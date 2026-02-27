@@ -69,11 +69,14 @@ impl<'a> CachedCompiler<'a> {
         platform: &dyn Platform,
         reporter: &ExecutionSpecificReporter,
     ) -> Result<CompilerOutput> {
+        let (resolc_heap_size, resolc_stack_size) = compiler.resolc_pvm_settings();
         let cache_key = CacheKey {
             compiler_identifier: platform.compiler_identifier(),
             compiler_version: compiler.version().clone(),
             metadata_file_path,
             solc_mode: mode.clone(),
+            resolc_heap_size,
+            resolc_stack_size,
         };
 
         let compilation_callback = || {
@@ -307,8 +310,8 @@ impl ArtifactsCache {
 
     #[instrument(level = "debug", skip_all, err)]
     pub async fn insert(&self, key: &CacheKey<'_>, value: &CacheValue) -> Result<()> {
-        let key = bson::to_vec(key).context("Failed to serialize cache key (bson)")?;
-        let value = bson::to_vec(value).context("Failed to serialize cache value (bson)")?;
+        let key = serde_json::to_vec(key).context("Failed to serialize cache key (json)")?;
+        let value = serde_json::to_vec(value).context("Failed to serialize cache value (json)")?;
         cacache::write(self.path.as_path(), key.encode_hex(), value)
             .await
             .with_context(|| {
@@ -318,11 +321,11 @@ impl ArtifactsCache {
     }
 
     pub async fn get(&self, key: &CacheKey<'_>) -> Option<CacheValue> {
-        let key = bson::to_vec(key).ok()?;
+        let key = serde_json::to_vec(key).ok()?;
         let value = cacache::read(self.path.as_path(), key.encode_hex())
             .await
             .ok()?;
-        let value = bson::from_slice::<CacheValue>(&value).ok()?;
+        let value = serde_json::from_slice::<CacheValue>(&value).ok()?;
         Some(value)
     }
 }
@@ -340,6 +343,12 @@ struct CacheKey<'a> {
 
     /// The mode that the compilation artifacts where compiled with.
     solc_mode: Cow<'a, Mode>,
+
+    /// The resolc PVM heap size setting, if applicable.
+    resolc_heap_size: Option<u32>,
+
+    /// The resolc PVM stack size setting, if applicable.
+    resolc_stack_size: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
