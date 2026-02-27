@@ -173,7 +173,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
                     reporter: fail_fast.then(|| test_definition.reporter.clone()),
                 };
 
-                if fail_fast && fail_fast_triggered.load(Ordering::Relaxed) {
+                if fail_fast && fail_fast_triggered.load(Ordering::Acquire) {
                     test_definition
                         .reporter
                         .report_test_ignored_event(
@@ -203,7 +203,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
                     None => None,
                 };
 
-                if fail_fast && fail_fast_triggered.load(Ordering::Relaxed) {
+                if fail_fast && fail_fast_triggered.load(Ordering::Acquire) {
                     test_definition
                         .reporter
                         .report_test_ignored_event(
@@ -232,7 +232,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
                             .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
                         fail_fast_guard.reported();
                         if fail_fast {
-                            fail_fast_triggered.store(true, Ordering::Relaxed);
+                            fail_fast_triggered.store(true, Ordering::Release);
                             if let Some(ref sem) = semaphore {
                                 sem.close();
                             }
@@ -258,7 +258,7 @@ pub async fn handle_differential_tests(context: Test, reporter: Reporter) -> any
                             .report_test_failed_event(format!("{error:#}"))
                             .unwrap_or_else(|e| tracing::warn!("Reporter send failed: {e:?}"));
                         if fail_fast {
-                            fail_fast_triggered.store(true, Ordering::Relaxed);
+                            fail_fast_triggered.store(true, Ordering::Release);
                             if let Some(ref sem) = semaphore {
                                 sem.close();
                             }

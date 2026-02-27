@@ -53,19 +53,26 @@ pub(crate) async fn get_or_download(
 }
 
 async fn download_to_file(path: &Path, downloader: &SolcDownloader) -> anyhow::Result<()> {
-    let Ok(file) = File::create_new(path) else {
+    if path.exists() {
         return Ok(());
-    };
+    }
+
+    let tmp_path = path.with_extension("downloading");
+    let file = File::create(&tmp_path)
+        .with_context(|| format!("Failed to create temp file {}", tmp_path.display()))?;
 
     #[cfg(unix)]
     {
         let mut permissions = file
             .metadata()
-            .with_context(|| format!("Failed to read metadata for {}", path.display()))?
+            .with_context(|| format!("Failed to read metadata for {}", tmp_path.display()))?
             .permissions();
         permissions.set_mode(permissions.mode() | 0o111);
         file.set_permissions(permissions).with_context(|| {
-            format!("Failed to set executable permissions on {}", path.display())
+            format!(
+                "Failed to set executable permissions on {}",
+                tmp_path.display()
+            )
         })?;
     }
 
@@ -76,32 +83,41 @@ async fn download_to_file(path: &Path, downloader: &SolcDownloader) -> anyhow::R
             .await
             .context("Failed to download solc binary bytes")?,
     )
-    .with_context(|| format!("Failed to write solc binary to {}", path.display()))?;
+    .with_context(|| format!("Failed to write solc binary to {}", tmp_path.display()))?;
     file.flush()
-        .with_context(|| format!("Failed to flush file {}", path.display()))?;
+        .with_context(|| format!("Failed to flush file {}", tmp_path.display()))?;
     drop(file);
 
     #[cfg(target_os = "macos")]
     std::process::Command::new("xattr")
         .arg("-d")
         .arg("com.apple.quarantine")
-        .arg(path)
+        .arg(&tmp_path)
         .stderr(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .spawn()
         .with_context(|| {
             format!(
                 "Failed to spawn xattr to remove quarantine attribute on {}",
-                path.display()
+                tmp_path.display()
             )
         })?
         .wait()
         .with_context(|| {
             format!(
                 "Failed waiting for xattr operation to complete on {}",
-                path.display()
+                tmp_path.display()
             )
         })?;
+
+    // Atomic rename: ensures other processes either see the complete file or nothing.
+    std::fs::rename(&tmp_path, path).with_context(|| {
+        format!(
+            "Failed to rename {} to {}",
+            tmp_path.display(),
+            path.display()
+        )
+    })?;
 
     Ok(())
 }

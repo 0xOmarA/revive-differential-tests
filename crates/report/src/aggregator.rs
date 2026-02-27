@@ -430,10 +430,17 @@ impl ReportAggregator {
                         let tps = block_information
                             .iter()
                             .tuple_windows::<(_, _)>()
-                            .map(|(block1, block2)| {
-                                block2.ethereum_block_information.transaction_hashes.len() as u64
-                                    / (block2.ethereum_block_information.block_timestamp
-                                        - block1.ethereum_block_information.block_timestamp)
+                            .filter_map(|(block1, block2)| {
+                                let delta = block2.ethereum_block_information.block_timestamp
+                                    - block1.ethereum_block_information.block_timestamp;
+                                if delta == 0 {
+                                    return None;
+                                }
+                                Some(
+                                    block2.ethereum_block_information.transaction_hashes.len()
+                                        as u64
+                                        / delta,
+                                )
                             })
                             .collect::<Vec<_>>();
                         report
@@ -446,10 +453,15 @@ impl ReportAggregator {
                         let gps = block_information
                             .iter()
                             .tuple_windows::<(_, _)>()
-                            .map(|(block1, block2)| {
-                                block2.ethereum_block_information.mined_gas as u64
-                                    / (block2.ethereum_block_information.block_timestamp
-                                        - block1.ethereum_block_information.block_timestamp)
+                            .filter_map(|(block1, block2)| {
+                                let delta = block2.ethereum_block_information.block_timestamp
+                                    - block1.ethereum_block_information.block_timestamp;
+                                if delta == 0 {
+                                    return None;
+                                }
+                                Some(
+                                    block2.ethereum_block_information.mined_gas as u64 / delta,
+                                )
                             })
                             .collect::<Vec<_>>();
                         report

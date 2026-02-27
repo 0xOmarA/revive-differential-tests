@@ -40,11 +40,11 @@ pub fn read_dir(path: impl AsRef<Path>) -> Result<Box<dyn Iterator<Item = Result
     match READ_DIR_CACHE.get(path.as_path()) {
         Some(entries) => Ok(Box::new(entries.into_iter().map(Ok)) as Box<_>),
         None => {
-            let entries = fs::read_dir(path.as_path())?
+            let entries: Vec<PathBuf> = fs::read_dir(path.as_path())?
                 .flat_map(|maybe_entry| maybe_entry.map(|entry| entry.path()))
                 .collect();
-            READ_DIR_CACHE.insert(path.clone(), entries);
-            Ok(read_dir(path).unwrap())
+            READ_DIR_CACHE.insert(path, entries.clone());
+            Ok(Box::new(entries.into_iter().map(Ok)) as Box<_>)
         }
     }
 }
