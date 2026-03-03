@@ -1,0 +1,1546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Benchmark Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+:root {
+  --bg: #F9FAFB;
+  --card: #FFFFFF;
+  --text: #111827;
+  --text-secondary: #6B7280;
+  --border: #E5E7EB;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --error: #EF4444;
+  --radius: 12px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-lg: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container { max-width: 1440px; margin: 0 auto; padding: 0 24px; }
+
+/* Header */
+header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(8px);
+  background: rgba(255,255,255,0.95);
+}
+
+header .container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+header h1 {
+  font-family: 'Inter Tight', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+header .meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.selectors {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.selectors label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.selectors select {
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  padding: 6px 28px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%236B7280' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+/* Sections */
+.section {
+  margin-top: 24px;
+}
+
+.section-title {
+  font-family: 'Inter Tight', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border);
+}
+
+/* KPI Cards */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.kpi-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.2s;
+}
+
+.kpi-card:hover { box-shadow: var(--shadow-lg); }
+
+.kpi-card .label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.kpi-card .value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.kpi-card .platform-values {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kpi-card .platform-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.kpi-card .platform-value .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.kpi-card .platform-value .pv-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Summary Statistics */
+.stats-table-wrap {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow-x: auto;
+}
+
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.stats-table th {
+  font-family: 'Inter Tight', sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  padding: 10px 14px;
+  text-align: right;
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+}
+
+.stats-table th:first-child,
+.stats-table th:nth-child(2) { text-align: left; }
+
+.stats-table td {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  padding: 8px 14px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.stats-table td:first-child {
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  text-align: left;
+  color: var(--text);
+}
+
+.stats-table td:nth-child(2) {
+  text-align: left;
+}
+
+.stats-table .platform-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stats-table .platform-cell .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.stats-table tr:last-child td { border-bottom: none; }
+
+/* Chart containers */
+.chart-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+.chart-card .chart-title {
+  font-family: 'Inter Tight', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.chart-area {
+  width: 100%;
+  min-height: 320px;
+}
+
+.chart-area.hero { min-height: 400px; }
+
+.chart-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.chart-row-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+/* Comparison Table */
+.comparison-table-wrap {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow-x: auto;
+}
+
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.comparison-table th {
+  font-family: 'Inter Tight', sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  padding: 12px 16px;
+  text-align: right;
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+}
+
+.comparison-table th:first-child { text-align: left; }
+
+.comparison-table td {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  padding: 10px 16px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.comparison-table td:first-child {
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  text-align: left;
+  color: var(--text);
+}
+
+.comparison-table tr:last-child td { border-bottom: none; }
+
+.delta-positive { color: var(--success); }
+.delta-negative { color: var(--error); }
+.delta-neutral { color: var(--text-secondary); }
+
+/* Raw Data */
+.disclosure {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.disclosure .arrow {
+  transition: transform 0.2s;
+  font-size: 12px;
+}
+
+.disclosure.open .arrow { transform: rotate(90deg); }
+
+.raw-data-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+.btn {
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn:hover { background: var(--bg); border-color: #d1d5db; }
+
+.raw-table-wrap {
+  max-height: 500px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.raw-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.raw-table th {
+  font-family: 'Inter Tight', sans-serif;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  text-align: right;
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  z-index: 1;
+}
+
+.raw-table th:first-child { text-align: left; }
+
+.raw-table td {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 6px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.raw-table td:first-child {
+  text-align: left;
+  font-family: 'Inter', sans-serif;
+}
+
+.hidden { display: none !important; }
+
+/* Responsive */
+@media (max-width: 1200px) {
+  .chart-row { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .kpi-card .value { font-size: 22px; }
+  header h1 { font-size: 16px; }
+}
+
+@media print {
+  header { position: static; }
+  .chart-area { min-height: 280px !important; }
+  .btn, .selectors { display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="container">
+    <div>
+      <h1 id="page-title">Benchmark Report</h1>
+      <div class="meta" id="page-meta"></div>
+    </div>
+    <div class="selectors" id="selectors"></div>
+  </div>
+</header>
+
+<main class="container">
+  <!-- KPI Hero Cards -->
+  <div class="kpi-grid" id="kpi-cards"></div>
+
+  <!-- Summary Statistics -->
+  <div class="section" id="summary-stats-section">
+    <h2 class="section-title">Summary Statistics</h2>
+    <div class="stats-table-wrap">
+      <table class="stats-table" id="summary-stats-table"></table>
+    </div>
+  </div>
+
+  <!-- Throughput Charts -->
+  <div class="section" id="throughput-section">
+    <h2 class="section-title">Throughput</h2>
+    <div class="chart-card">
+      <div class="chart-title">Transactions Per Second</div>
+      <div class="chart-area hero" id="chart-tps"></div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-title">Transaction Count Per Block</div>
+        <div class="chart-area" id="chart-tx-count"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Gas Per Second</div>
+        <div class="chart-area" id="chart-gas-per-second"></div>
+      </div>
+    </div>
+    <div class="chart-card" style="margin-top:16px">
+      <div class="chart-title">Gas Mined Per Block</div>
+      <div class="chart-area" id="chart-gas-mined"></div>
+    </div>
+  </div>
+
+  <!-- Resource Utilization -->
+  <div class="section" id="utilization-section">
+    <h2 class="section-title">Resource Utilization</h2>
+    <div class="chart-row-3" id="utilization-charts"></div>
+  </div>
+
+  <!-- Substrate Deep Dive -->
+  <div class="section hidden" id="substrate-section">
+    <h2 class="section-title">Substrate Metrics</h2>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-title">Ref Time Per Second</div>
+        <div class="chart-area" id="chart-ref-time-per-second"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Proof Size Per Second</div>
+        <div class="chart-area" id="chart-proof-size-per-second"></div>
+      </div>
+    </div>
+    <div class="chart-card" style="margin-top:16px">
+      <div class="chart-title">Block Weights (Absolute)</div>
+      <div class="chart-area" id="chart-block-weights"></div>
+    </div>
+  </div>
+
+  <!-- Step Distribution -->
+  <div class="section hidden" id="step-distribution-section">
+    <h2 class="section-title">Step Distribution</h2>
+    <div class="chart-card">
+      <div class="chart-title">Transactions Per Step Per Block</div>
+      <div class="chart-area" id="chart-step-distribution"></div>
+    </div>
+  </div>
+
+  <!-- Platform Comparison -->
+  <div class="section hidden" id="comparison-section">
+    <h2 class="section-title">Platform Comparison</h2>
+    <div class="comparison-table-wrap">
+      <table class="comparison-table" id="comparison-table"></table>
+    </div>
+  </div>
+
+  <!-- Contract Information -->
+  <div class="section hidden" id="contract-section">
+    <h2 class="section-title">Contract Information</h2>
+    <div class="chart-card">
+      <div class="chart-title">Contract Bytecode Sizes</div>
+      <div class="chart-area" id="chart-contract-sizes"></div>
+    </div>
+  </div>
+
+  <!-- Raw Data -->
+  <div class="section" id="raw-data-section" style="margin-bottom:48px">
+    <div class="disclosure" id="raw-data-toggle">
+      <span class="arrow">&#9654;</span>
+      <h2 class="section-title" style="margin-bottom:0;border-bottom:none;padding-bottom:0">Raw Block Data</h2>
+    </div>
+    <div class="hidden" id="raw-data-content">
+      <div class="raw-data-controls">
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Platform:</label>
+        <select id="raw-data-platform-select" style="font-family:'Inter',sans-serif;font-size:13px;padding:4px 24px 4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%236B7280' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 6px center"></select>
+        <button class="btn" id="csv-export-btn">Copy as CSV</button>
+      </div>
+      <div class="raw-table-wrap">
+        <table class="raw-table" id="raw-data-table"></table>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script id="report-data" type="application/json">/*__REPORT_DATA__*/</script>
+<script>
+'use strict';
+
+// ── Platform Colors ──────────────────────────────────────────────────────────
+const PLATFORM_COLORS = {
+  'geth-evm-solc':                     '#3B82F6',
+  'lighthouse-geth-evm-solc':          '#6366F1',
+  'revive-dev-node-polkavm-resolc':    '#10B981',
+  'revive-dev-node-revm-solc':         '#14B8A6',
+  'zombienet-polkavm-resolc':          '#F59E0B',
+  'zombienet-revm-solc':               '#F97316',
+  'polkadot-omni-node-polkavm-resolc': '#EC4899',
+  'polkadot-omni-node-revm-solc':      '#A855F7',
+};
+const FALLBACK_COLORS = ['#8B5CF6','#06B6D4','#84CC16','#F43F5E','#78716C','#0EA5E9'];
+let fallbackIdx = 0;
+
+function platformColor(name) {
+  if (PLATFORM_COLORS[name]) return PLATFORM_COLORS[name];
+  if (!PLATFORM_COLORS[name]) {
+    PLATFORM_COLORS[name] = FALLBACK_COLORS[fallbackIdx % FALLBACK_COLORS.length];
+    fallbackIdx++;
+  }
+  return PLATFORM_COLORS[name];
+}
+
+// ── Number Formatting ────────────────────────────────────────────────────────
+function fmtSI(n) {
+  if (n == null) return '—';
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return (n / 1e12).toFixed(2) + 'T';
+  if (abs >= 1e9) return (n / 1e9).toFixed(2) + 'G';
+  if (abs >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (abs >= 1e3) return (n / 1e3).toFixed(2) + 'K';
+  return n.toFixed(1);
+}
+
+function fmtCount(n) {
+  if (n == null) return '—';
+  return Number(n).toLocaleString('en-US');
+}
+
+function fmtPct(n) {
+  if (n == null) return '—';
+  return Math.round(n) + '%';
+}
+
+function fmtDuration(s) {
+  if (s == null) return '—';
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return m + 'm ' + rem + 's';
+}
+
+function fmtTps(n) {
+  if (n == null) return '—';
+  return n.toFixed(1) + ' tx/s';
+}
+
+function fmtBytes(b) {
+  if (b == null) return '—';
+  if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+  if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+  return b + ' B';
+}
+
+// ── Statistics ───────────────────────────────────────────────────────────────
+function computeStats(arr) {
+  if (!arr || arr.length === 0) return null;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const n = sorted.length;
+  const sum = sorted.reduce((s, v) => s + v, 0);
+  const mean = sum / n;
+  const median = n % 2 === 0 ? (sorted[n/2 - 1] + sorted[n/2]) / 2 : sorted[Math.floor(n/2)];
+  const p5 = sorted[Math.max(0, Math.floor(n * 0.05))];
+  const p95 = sorted[Math.min(n - 1, Math.floor(n * 0.95))];
+  return { mean, median, min: sorted[0], max: sorted[n-1], p5, p95, sum, count: n };
+}
+
+// ── Data Preprocessing ───────────────────────────────────────────────────────
+const U64_MAX = 18446744073709551615n;
+
+function isGasLimitUnlimited(limit) {
+  try { return BigInt(limit) >= U64_MAX; } catch { return false; }
+}
+
+function preprocessReport(report) {
+  const workloads = [];
+  const ei = report.execution_information || {};
+
+  for (const [filePath, fileReport] of Object.entries(ei)) {
+    const caseReports = fileReport.case_reports || {};
+    for (const [caseIdx, caseReport] of Object.entries(caseReports)) {
+      const modeReports = caseReport.mode_execution_reports || {};
+      for (const [mode, execReport] of Object.entries(modeReports)) {
+        workloads.push({ filePath, caseIdx, mode, execReport });
+      }
+    }
+  }
+
+  return workloads;
+}
+
+function extractMetrics(execReport) {
+  const metricsMap = execReport.metrics_information || {};
+  const platforms = Object.keys(metricsMap);
+  const hasSubstrate = platforms.some(p =>
+    (metricsMap[p] || []).some(m => m.block_ref_time != null)
+  );
+
+  // Aggregate stats per platform
+  const aggregates = {};
+  for (const [platform, blocks] of Object.entries(metricsMap)) {
+    const tpsArr = blocks.map(b => b.transactions_per_second).filter(v => v != null);
+    const gasPerSArr = blocks.map(b => b.gas_per_second).filter(v => v != null);
+    const txCounts = blocks.map(b => b.transaction_count);
+    const gasFullness = blocks.map(b => b.block_gas_fullness);
+    const refTimeFullness = blocks.map(b => b.block_ref_time_fullness).filter(v => v != null);
+    const proofSizeFullness = blocks.map(b => b.block_proof_size_fullness).filter(v => v != null);
+    const refTimePerS = blocks.map(b => b.ref_time_per_second).filter(v => v != null);
+    const proofSizePerS = blocks.map(b => b.proof_size_per_second).filter(v => v != null);
+    const duration = blocks.length > 0 ? blocks[blocks.length - 1].relative_observation_time_seconds : 0;
+    const unlimitedGas = blocks.length > 0 && isGasLimitUnlimited(blocks[0].block_gas_limit);
+
+    aggregates[platform] = {
+      tps: computeStats(tpsArr),
+      gasPerSecond: computeStats(gasPerSArr),
+      txCount: computeStats(txCounts),
+      gasFullness: computeStats(gasFullness),
+      refTimeFullness: computeStats(refTimeFullness),
+      proofSizeFullness: computeStats(proofSizeFullness),
+      refTimePerSecond: computeStats(refTimePerS),
+      proofSizePerSecond: computeStats(proofSizePerS),
+      totalTx: txCounts.reduce((s, v) => s + v, 0),
+      blockCount: blocks.length,
+      duration,
+      unlimitedGas,
+      isSubstrate: blocks.some(b => b.block_ref_time != null),
+    };
+  }
+
+  // Collect all step paths
+  const allSteps = new Set();
+  for (const blocks of Object.values(metricsMap)) {
+    for (const b of blocks) {
+      if (b.step_count) Object.keys(b.step_count).forEach(k => allSteps.add(k));
+    }
+  }
+
+  return { metricsMap, platforms, hasSubstrate, aggregates, allSteps: [...allSteps].sort() };
+}
+
+// ── ECharts Helpers ──────────────────────────────────────────────────────────
+const chartInstances = [];
+
+function createChart(containerId, option) {
+  const el = document.getElementById(containerId);
+  if (!el) return null;
+  const chart = echarts.init(el);
+  chart.setOption(option);
+  chartInstances.push(chart);
+  return chart;
+}
+
+function baseOption(title) {
+  return {
+    animation: true,
+    animationDuration: 400,
+    grid: { left: 60, right: 24, top: 40, bottom: 60 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      borderColor: '#E5E7EB',
+      borderWidth: 1,
+      textStyle: { fontFamily: 'Inter, sans-serif', fontSize: 12, color: '#111827' },
+      axisPointer: { type: 'cross', lineStyle: { color: '#D1D5DB' } },
+    },
+    toolbox: {
+      right: 8,
+      top: 4,
+      feature: { saveAsImage: { pixelRatio: 2, title: 'Save' } },
+      iconStyle: { borderColor: '#9CA3AF' },
+    },
+    legend: {
+      top: 8,
+      textStyle: { fontFamily: 'Inter, sans-serif', fontSize: 12 },
+    },
+  };
+}
+
+function timeXAxis(label) {
+  return {
+    type: 'value',
+    name: label || 'Elapsed Time (s)',
+    nameLocation: 'center',
+    nameGap: 30,
+    nameTextStyle: { fontFamily: 'Inter, sans-serif', fontSize: 12, color: '#6B7280' },
+    axisLabel: { fontFamily: 'JetBrains Mono, monospace', fontSize: 11, formatter: v => v + 's' },
+    splitLine: { lineStyle: { color: '#F3F4F6' } },
+  };
+}
+
+function blockXAxis() {
+  return {
+    type: 'category',
+    name: 'Block #',
+    nameLocation: 'center',
+    nameGap: 30,
+    nameTextStyle: { fontFamily: 'Inter, sans-serif', fontSize: 12, color: '#6B7280' },
+    axisLabel: { fontFamily: 'JetBrains Mono, monospace', fontSize: 11 },
+    splitLine: { lineStyle: { color: '#F3F4F6' } },
+  };
+}
+
+function valueYAxis(name, formatter) {
+  return {
+    type: 'value',
+    name: name,
+    nameTextStyle: { fontFamily: 'Inter, sans-serif', fontSize: 11, color: '#6B7280' },
+    axisLabel: { fontFamily: 'JetBrains Mono, monospace', fontSize: 11, formatter: formatter || (v => fmtSI(v)) },
+    splitLine: { lineStyle: { color: '#F3F4F6' } },
+  };
+}
+
+function percentYAxis(name) {
+  return {
+    type: 'value',
+    name: name,
+    min: 0,
+    max: 100,
+    nameTextStyle: { fontFamily: 'Inter, sans-serif', fontSize: 11, color: '#6B7280' },
+    axisLabel: { fontFamily: 'JetBrains Mono, monospace', fontSize: 11, formatter: v => v + '%' },
+    splitLine: { lineStyle: { color: '#F3F4F6' } },
+  };
+}
+
+function dataZoom() {
+  return [
+    { type: 'inside', xAxisIndex: 0 },
+    { type: 'slider', xAxisIndex: 0, height: 20, bottom: 8, borderColor: '#E5E7EB', fillerColor: 'rgba(59,130,246,0.08)' },
+  ];
+}
+
+function lineSeries(name, data, color) {
+  return {
+    name, type: 'line', data, smooth: true, symbol: 'circle', symbolSize: 4,
+    lineStyle: { width: 2, color },
+    itemStyle: { color },
+    areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+      { offset: 0, color: color + '20' }, { offset: 1, color: color + '04' }
+    ]) },
+  };
+}
+
+function barSeries(name, data, color) {
+  return {
+    name, type: 'bar', data,
+    itemStyle: { color, borderRadius: [3, 3, 0, 0] },
+    barMaxWidth: 40,
+  };
+}
+
+function areaSeries(name, data, color) {
+  return {
+    name, type: 'line', data, smooth: true, symbol: 'none',
+    lineStyle: { width: 1.5, color },
+    itemStyle: { color },
+    areaStyle: { color: color + '30' },
+  };
+}
+
+// ── Render Functions ─────────────────────────────────────────────────────────
+
+function renderKPICards(platforms, aggregates) {
+  const container = document.getElementById('kpi-cards');
+  container.innerHTML = '';
+
+  const cards = [
+    { label: 'Peak TPS', getValue: a => a.tps ? fmtTps(a.tps.max) : '—', key: 'tps', extract: a => a.tps?.max },
+    { label: 'Avg TPS', getValue: a => a.tps ? fmtTps(a.tps.mean) : '—', key: 'tps', extract: a => a.tps?.mean },
+    { label: 'Total Transactions', getValue: a => fmtCount(a.totalTx), extract: a => a.totalTx },
+    { label: 'Duration', getValue: a => fmtDuration(a.duration), extract: a => a.duration },
+    { label: 'Blocks', getValue: a => fmtCount(a.blockCount), extract: a => a.blockCount },
+    { label: 'Avg Block Fullness', getValue: a => {
+      if (a.isSubstrate && a.refTimeFullness) return fmtPct(a.refTimeFullness.mean) + ' (ref time)';
+      if (!a.unlimitedGas && a.gasFullness) return fmtPct(a.gasFullness.mean) + ' (gas)';
+      return '—';
+    }, extract: a => a.isSubstrate ? a.refTimeFullness?.mean : (a.unlimitedGas ? null : a.gasFullness?.mean) },
+  ];
+
+  for (const card of cards) {
+    const el = document.createElement('div');
+    el.className = 'kpi-card';
+
+    // Find best value
+    let bestPlatform = platforms[0];
+    let bestVal = -Infinity;
+    for (const p of platforms) {
+      const v = card.extract(aggregates[p]);
+      if (v != null && v > bestVal) { bestVal = v; bestPlatform = p; }
+    }
+
+    let html = `<div class="label">${card.label}</div>`;
+    html += `<div class="value">${card.getValue(aggregates[bestPlatform])}</div>`;
+
+    if (platforms.length > 1) {
+      html += '<div class="platform-values">';
+      for (const p of platforms) {
+        const color = platformColor(p);
+        const shortName = p.length > 30 ? p.slice(0, 28) + '...' : p;
+        html += `<div class="platform-value">
+          <span class="dot" style="background:${color}"></span>
+          <span class="pv-val">${card.getValue(aggregates[p])}</span>
+          <span>${shortName}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+
+    el.innerHTML = html;
+    container.appendChild(el);
+  }
+}
+
+function renderSummaryStats(platforms, aggregates) {
+  const table = document.getElementById('summary-stats-table');
+  let html = '<thead><tr><th style="text-align:left">Metric</th><th style="text-align:left">Platform</th><th>Mean</th><th>Median</th><th>P5</th><th>P95</th><th>Min</th><th>Max</th></tr></thead><tbody>';
+
+  const metrics = [
+    { label: 'TPS', key: 'tps', fmt: v => v.toFixed(1) },
+    { label: 'Gas/s', key: 'gasPerSecond', fmt: v => fmtSI(v) },
+    { label: 'Tx Count/Block', key: 'txCount', fmt: v => fmtCount(v) },
+    { label: 'Gas Fullness', key: 'gasFullness', fmt: v => fmtPct(v) },
+    { label: 'Ref Time Fullness', key: 'refTimeFullness', fmt: v => fmtPct(v) },
+    { label: 'Proof Size Fullness', key: 'proofSizeFullness', fmt: v => fmtPct(v) },
+    { label: 'Ref Time/s', key: 'refTimePerSecond', fmt: v => fmtSI(v) },
+    { label: 'Proof Size/s', key: 'proofSizePerSecond', fmt: v => fmtSI(v) },
+  ];
+
+  for (const metric of metrics) {
+    for (const platform of platforms) {
+      const stats = aggregates[platform][metric.key];
+      if (!stats) continue;
+      const color = platformColor(platform);
+      const shortName = platform.length > 35 ? platform.slice(0, 33) + '...' : platform;
+      html += `<tr>
+        <td>${metric.label}</td>
+        <td><div class="platform-cell"><span class="dot" style="background:${color}"></span>${shortName}</div></td>
+        <td>${metric.fmt(stats.mean)}</td>
+        <td>${metric.fmt(stats.median)}</td>
+        <td>${metric.fmt(stats.p5)}</td>
+        <td>${metric.fmt(stats.p95)}</td>
+        <td>${metric.fmt(stats.min)}</td>
+        <td>${metric.fmt(stats.max)}</td>
+      </tr>`;
+    }
+  }
+
+  html += '</tbody>';
+  table.innerHTML = html;
+}
+
+function renderThroughputCharts(metricsMap, platforms) {
+  // TPS Over Time (hero chart)
+  const tpsSeries = [];
+  for (const p of platforms) {
+    const blocks = metricsMap[p] || [];
+    const data = blocks
+      .filter(b => b.transactions_per_second != null)
+      .map(b => [b.relative_observation_time_seconds, b.transactions_per_second]);
+    tpsSeries.push(lineSeries(p, data, platformColor(p)));
+  }
+
+  const tpsChart = createChart('chart-tps', {
+    ...baseOption(),
+    xAxis: timeXAxis(),
+    yAxis: valueYAxis('tx/s', v => fmtSI(v)),
+    series: tpsSeries,
+    dataZoom: dataZoom(),
+  });
+
+  // Tx Count Per Block
+  const blockNumbers = [];
+  const maxBlocks = Math.max(...platforms.map(p => (metricsMap[p] || []).length));
+  for (let i = 0; i < maxBlocks; i++) blockNumbers.push(String(i));
+
+  const txSeries = [];
+  for (const p of platforms) {
+    const blocks = metricsMap[p] || [];
+    const data = blocks.map(b => b.transaction_count);
+    txSeries.push(barSeries(p, data, platformColor(p)));
+  }
+
+  createChart('chart-tx-count', {
+    ...baseOption(),
+    xAxis: { ...blockXAxis(), data: blockNumbers },
+    yAxis: valueYAxis('Transactions', v => fmtSI(v)),
+    series: txSeries,
+    dataZoom: dataZoom(),
+  });
+
+  // Gas Per Second
+  const gasSeries = [];
+  for (const p of platforms) {
+    const blocks = metricsMap[p] || [];
+    const data = blocks
+      .filter(b => b.gas_per_second != null)
+      .map(b => [b.relative_observation_time_seconds, b.gas_per_second]);
+    gasSeries.push(lineSeries(p, data, platformColor(p)));
+  }
+
+  createChart('chart-gas-per-second', {
+    ...baseOption(),
+    xAxis: timeXAxis(),
+    yAxis: valueYAxis('Gas/s', v => fmtSI(v)),
+    series: gasSeries,
+    dataZoom: dataZoom(),
+  });
+
+  // Gas Mined Per Block
+  const gasMinedSeries = [];
+  for (const p of platforms) {
+    const blocks = metricsMap[p] || [];
+    const data = blocks.map(b => Number(b.block_gas_mined));
+    gasMinedSeries.push(barSeries(p, data, platformColor(p)));
+  }
+
+  // Add reference line for gas limit if not unlimited
+  const markLines = [];
+  for (const p of platforms) {
+    const blocks = metricsMap[p] || [];
+    if (blocks.length > 0 && !isGasLimitUnlimited(blocks[0].block_gas_limit)) {
+      const limit = Number(blocks[0].block_gas_limit);
+      gasMinedSeries[gasMinedSeries.length - 1].markLine = {
+        silent: true,
+        data: [{ yAxis: limit, label: { formatter: 'Gas Limit: ' + fmtSI(limit), fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }, lineStyle: { color: '#EF4444', type: 'dashed', width: 1.5 } }],
+      };
+    }
+  }
+
+  createChart('chart-gas-mined', {
+    ...baseOption(),
+    xAxis: { ...blockXAxis(), data: blockNumbers },
+    yAxis: valueYAxis('Gas Mined', v => fmtSI(v)),
+    series: gasMinedSeries,
+    dataZoom: dataZoom(),
+  });
+
+  // Connect throughput charts
+  if (tpsChart) {
+    const group = 'throughput';
+    chartInstances.filter(c => c).forEach(c => c.group = group);
+    echarts.connect(group);
+  }
+}
+
+function renderUtilizationCharts(metricsMap, platforms, hasSubstrate, aggregates) {
+  const container = document.getElementById('utilization-charts');
+  container.innerHTML = '';
+
+  const charts = [];
+
+  // Gas Fullness - only if at least one platform has meaningful gas limits
+  const hasGasFullness = platforms.some(p => !aggregates[p].unlimitedGas);
+  if (hasGasFullness) {
+    const div = document.createElement('div');
+    div.className = 'chart-card';
+    div.innerHTML = '<div class="chart-title">Block Gas Fullness</div><div class="chart-area" id="chart-gas-fullness-dyn"></div>';
+    container.appendChild(div);
+
+    const blockNumbers = [];
+    const maxBlocks = Math.max(...platforms.map(p => (metricsMap[p] || []).length));
+    for (let i = 0; i < maxBlocks; i++) blockNumbers.push(String(i));
+
+    const series = [];
+    for (const p of platforms) {
+      if (aggregates[p].unlimitedGas) continue;
+      const blocks = metricsMap[p] || [];
+      const data = blocks.map(b => b.block_gas_fullness);
+      series.push(areaSeries(p, data, platformColor(p)));
+    }
+
+    charts.push(['chart-gas-fullness-dyn', {
+      ...baseOption(),
+      xAxis: { ...blockXAxis(), data: blockNumbers },
+      yAxis: percentYAxis('Gas Fullness'),
+      series,
+      dataZoom: dataZoom(),
+    }]);
+  }
+
+  // Ref Time Fullness
+  if (hasSubstrate) {
+    const div = document.createElement('div');
+    div.className = 'chart-card';
+    div.innerHTML = '<div class="chart-title">Ref Time Fullness</div><div class="chart-area" id="chart-ref-time-fullness-dyn"></div>';
+    container.appendChild(div);
+
+    const blockNumbers = [];
+    const maxBlocks = Math.max(...platforms.filter(p => aggregates[p].isSubstrate).map(p => (metricsMap[p] || []).length));
+    for (let i = 0; i < maxBlocks; i++) blockNumbers.push(String(i));
+
+    const series = [];
+    for (const p of platforms) {
+      if (!aggregates[p].isSubstrate) continue;
+      const blocks = metricsMap[p] || [];
+      const data = blocks.map(b => b.block_ref_time_fullness ?? null);
+      series.push(areaSeries(p, data, platformColor(p)));
+    }
+
+    charts.push(['chart-ref-time-fullness-dyn', {
+      ...baseOption(),
+      xAxis: { ...blockXAxis(), data: blockNumbers },
+      yAxis: percentYAxis('Ref Time Fullness'),
+      series,
+      dataZoom: dataZoom(),
+    }]);
+  }
+
+  // Proof Size Fullness
+  if (hasSubstrate) {
+    const div = document.createElement('div');
+    div.className = 'chart-card';
+    div.innerHTML = '<div class="chart-title">Proof Size Fullness</div><div class="chart-area" id="chart-proof-size-fullness-dyn"></div>';
+    container.appendChild(div);
+
+    const blockNumbers = [];
+    const maxBlocks = Math.max(...platforms.filter(p => aggregates[p].isSubstrate).map(p => (metricsMap[p] || []).length));
+    for (let i = 0; i < maxBlocks; i++) blockNumbers.push(String(i));
+
+    const series = [];
+    for (const p of platforms) {
+      if (!aggregates[p].isSubstrate) continue;
+      const blocks = metricsMap[p] || [];
+      const data = blocks.map(b => b.block_proof_size_fullness ?? null);
+      series.push(areaSeries(p, data, platformColor(p)));
+    }
+
+    charts.push(['chart-proof-size-fullness-dyn', {
+      ...baseOption(),
+      xAxis: { ...blockXAxis(), data: blockNumbers },
+      yAxis: percentYAxis('Proof Size Fullness'),
+      series,
+      dataZoom: dataZoom(),
+    }]);
+  }
+
+  // Render all utilization charts
+  for (const [id, option] of charts) {
+    createChart(id, option);
+  }
+}
+
+function renderSubstrateCharts(metricsMap, platforms, aggregates) {
+  const substratePlatforms = platforms.filter(p => aggregates[p].isSubstrate);
+  if (substratePlatforms.length === 0) return;
+
+  document.getElementById('substrate-section').classList.remove('hidden');
+
+  // Ref Time Per Second
+  const rtSeries = [];
+  for (const p of substratePlatforms) {
+    const blocks = metricsMap[p] || [];
+    const data = blocks
+      .filter(b => b.ref_time_per_second != null)
+      .map(b => [b.relative_observation_time_seconds, b.ref_time_per_second]);
+    rtSeries.push(lineSeries(p, data, platformColor(p)));
+  }
+
+  createChart('chart-ref-time-per-second', {
+    ...baseOption(),
+    xAxis: timeXAxis(),
+    yAxis: valueYAxis('Ref Time/s', v => fmtSI(v)),
+    series: rtSeries,
+    dataZoom: dataZoom(),
+  });
+
+  // Proof Size Per Second
+  const psSeries = [];
+  for (const p of substratePlatforms) {
+    const blocks = metricsMap[p] || [];
+    const data = blocks
+      .filter(b => b.proof_size_per_second != null)
+      .map(b => [b.relative_observation_time_seconds, b.proof_size_per_second]);
+    psSeries.push(lineSeries(p, data, platformColor(p)));
+  }
+
+  createChart('chart-proof-size-per-second', {
+    ...baseOption(),
+    xAxis: timeXAxis(),
+    yAxis: valueYAxis('Proof Size/s', v => fmtBytes(v)),
+    series: psSeries,
+    dataZoom: dataZoom(),
+  });
+
+  // Block Weights (dual bar)
+  const blockNumbers = [];
+  const maxBlocks = Math.max(...substratePlatforms.map(p => (metricsMap[p] || []).length));
+  for (let i = 0; i < maxBlocks; i++) blockNumbers.push(String(i));
+
+  const weightSeries = [];
+  for (const p of substratePlatforms) {
+    const blocks = metricsMap[p] || [];
+    const rtData = blocks.map(b => b.block_ref_time != null ? Number(b.block_ref_time) : null);
+    const psData = blocks.map(b => b.block_proof_size != null ? Number(b.block_proof_size) : null);
+    weightSeries.push({ ...barSeries(p + ' (ref_time)', rtData, platformColor(p)), yAxisIndex: 0 });
+    weightSeries.push({ ...barSeries(p + ' (proof_size)', psData, platformColor(p) + '80'), yAxisIndex: 1 });
+  }
+
+  // Add reference lines for limits
+  if (substratePlatforms.length > 0) {
+    const blocks0 = metricsMap[substratePlatforms[0]] || [];
+    if (blocks0.length > 0) {
+      const rtLimit = blocks0[0].block_ref_time_limit;
+      const psLimit = blocks0[0].block_proof_size_limit;
+      if (rtLimit != null && weightSeries.length > 0) {
+        weightSeries[0].markLine = {
+          silent: true,
+          data: [{ yAxis: Number(rtLimit), label: { formatter: 'Ref Time Limit', fontFamily: 'JetBrains Mono', fontSize: 10 }, lineStyle: { color: '#EF4444', type: 'dashed' } }],
+        };
+      }
+      if (psLimit != null && weightSeries.length > 1) {
+        weightSeries[1].markLine = {
+          silent: true,
+          data: [{ yAxis: Number(psLimit), label: { formatter: 'Proof Size Limit', fontFamily: 'JetBrains Mono', fontSize: 10 }, lineStyle: { color: '#F97316', type: 'dashed' } }],
+        };
+      }
+    }
+  }
+
+  createChart('chart-block-weights', {
+    ...baseOption(),
+    xAxis: { ...blockXAxis(), data: blockNumbers },
+    yAxis: [
+      valueYAxis('Ref Time', v => fmtSI(v)),
+      { ...valueYAxis('Proof Size', v => fmtBytes(v)), position: 'right' },
+    ],
+    series: weightSeries,
+    dataZoom: dataZoom(),
+  });
+}
+
+function renderStepDistribution(metricsMap, platforms, allSteps) {
+  if (allSteps.length <= 1) return;
+
+  document.getElementById('step-distribution-section').classList.remove('hidden');
+
+  // Use first platform for step distribution visualization
+  const STEP_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16'];
+
+  // Build per-platform
+  const p = platforms[0];
+  const blocks = metricsMap[p] || [];
+  const blockNumbers = blocks.map((_, i) => String(i));
+
+  const series = [];
+  for (let i = 0; i < allSteps.length; i++) {
+    const step = allSteps[i];
+    const data = blocks.map(b => (b.step_count && b.step_count[step]) || 0);
+    series.push({
+      name: 'Step ' + step, type: 'bar', stack: 'steps', data,
+      itemStyle: { color: STEP_COLORS[i % STEP_COLORS.length], borderRadius: i === allSteps.length - 1 ? [3, 3, 0, 0] : 0 },
+      barMaxWidth: 40,
+    });
+  }
+
+  createChart('chart-step-distribution', {
+    ...baseOption(),
+    xAxis: { ...blockXAxis(), data: blockNumbers },
+    yAxis: valueYAxis('Transactions', v => fmtSI(v)),
+    series,
+    dataZoom: dataZoom(),
+  });
+}
+
+function renderComparisonTable(platforms, aggregates) {
+  if (platforms.length < 2) return;
+
+  document.getElementById('comparison-section').classList.remove('hidden');
+
+  const ref = platforms[0];
+  const others = platforms.slice(1);
+
+  let html = '<thead><tr><th style="text-align:left">Metric</th>';
+  for (const p of platforms) {
+    const color = platformColor(p);
+    const shortName = p.length > 28 ? p.slice(0, 26) + '...' : p;
+    html += `<th><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;vertical-align:middle"></span>${shortName}${p === ref ? ' (ref)' : ''}</th>`;
+  }
+  for (const p of others) {
+    html += `<th>Delta vs ref</th>`;
+  }
+  html += '</tr></thead><tbody>';
+
+  const rows = [
+    { label: 'Avg TPS', get: a => a.tps?.mean, fmt: v => fmtTps(v), higherIsBetter: true },
+    { label: 'Peak TPS', get: a => a.tps?.max, fmt: v => fmtTps(v), higherIsBetter: true },
+    { label: 'Median TPS', get: a => a.tps?.median, fmt: v => fmtTps(v), higherIsBetter: true },
+    { label: 'Total Txns', get: a => a.totalTx, fmt: v => fmtCount(v), higherIsBetter: true },
+    { label: 'Duration', get: a => a.duration, fmt: v => fmtDuration(v), higherIsBetter: false },
+    { label: 'Avg Gas Fullness', get: a => a.unlimitedGas ? null : a.gasFullness?.mean, fmt: v => fmtPct(v), higherIsBetter: null },
+    { label: 'Avg Ref Time Fullness', get: a => a.refTimeFullness?.mean, fmt: v => fmtPct(v), higherIsBetter: null },
+    { label: 'Avg Proof Size Fullness', get: a => a.proofSizeFullness?.mean, fmt: v => fmtPct(v), higherIsBetter: null },
+  ];
+
+  for (const row of rows) {
+    html += `<tr><td>${row.label}</td>`;
+    const refVal = row.get(aggregates[ref]);
+    for (const p of platforms) {
+      const val = row.get(aggregates[p]);
+      html += `<td>${val != null ? row.fmt(val) : '—'}</td>`;
+    }
+    for (const p of others) {
+      const val = row.get(aggregates[p]);
+      if (val == null || refVal == null || refVal === 0) {
+        html += '<td class="delta-neutral">—</td>';
+      } else {
+        const pctDiff = ((val - refVal) / Math.abs(refVal)) * 100;
+        const sign = pctDiff >= 0 ? '+' : '';
+        let cls = 'delta-neutral';
+        if (row.higherIsBetter === true) cls = pctDiff >= 0 ? 'delta-positive' : 'delta-negative';
+        else if (row.higherIsBetter === false) cls = pctDiff <= 0 ? 'delta-positive' : 'delta-negative';
+        html += `<td class="${cls}">${sign}${pctDiff.toFixed(1)}%</td>`;
+      }
+    }
+    html += '</tr>';
+  }
+
+  html += '</tbody>';
+  document.getElementById('comparison-table').innerHTML = html;
+}
+
+function renderContractInfo(compiledContracts, platforms) {
+  if (!compiledContracts || Object.keys(compiledContracts).length === 0) return;
+
+  document.getElementById('contract-section').classList.remove('hidden');
+
+  const contracts = [];
+  for (const [filePath, contractMap] of Object.entries(compiledContracts)) {
+    for (const [contractName, info] of Object.entries(contractMap)) {
+      contracts.push({ name: contractName, file: filePath, sizes: info.contract_size || {} });
+    }
+  }
+
+  if (contracts.length === 0) return;
+
+  const yLabels = contracts.map(c => c.name);
+  const series = [];
+
+  for (const p of platforms) {
+    const data = contracts.map(c => c.sizes[p] || 0);
+    series.push({
+      name: p, type: 'bar', data,
+      itemStyle: { color: platformColor(p), borderRadius: [0, 3, 3, 0] },
+      barMaxWidth: 30,
+    });
+  }
+
+  createChart('chart-contract-sizes', {
+    ...baseOption(),
+    grid: { left: 120, right: 24, top: 40, bottom: 40 },
+    xAxis: valueYAxis('Size', v => fmtBytes(v)),
+    yAxis: { type: 'category', data: yLabels, axisLabel: { fontFamily: 'JetBrains Mono, monospace', fontSize: 12 } },
+    series,
+    tooltip: {
+      ...baseOption().tooltip,
+      formatter: params => {
+        if (!Array.isArray(params)) params = [params];
+        let tip = `<strong>${params[0].name}</strong><br/>`;
+        for (const p of params) {
+          tip += `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:4px"></span>${p.seriesName}: ${fmtBytes(p.value)}<br/>`;
+        }
+        return tip;
+      },
+    },
+  });
+}
+
+function renderRawDataTable(metricsMap, platforms) {
+  const select = document.getElementById('raw-data-platform-select');
+  select.innerHTML = '';
+  for (const p of platforms) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p;
+    select.appendChild(opt);
+  }
+
+  function render(platform) {
+    const blocks = metricsMap[platform] || [];
+    if (blocks.length === 0) return;
+
+    const isSubstrate = blocks.some(b => b.block_ref_time != null);
+
+    const columns = [
+      { key: 'block_number', label: 'Block #' },
+      { key: 'relative_block_number', label: 'Rel Block' },
+      { key: 'relative_observation_time_seconds', label: 'Rel Time (s)' },
+      { key: 'transaction_count', label: 'Tx Count' },
+      { key: 'transactions_per_second', label: 'TPS' },
+      { key: 'block_gas_mined', label: 'Gas Mined' },
+      { key: 'gas_per_second', label: 'Gas/s' },
+      { key: 'block_gas_fullness', label: 'Gas Full %' },
+    ];
+
+    if (isSubstrate) {
+      columns.push(
+        { key: 'block_ref_time', label: 'Ref Time' },
+        { key: 'block_ref_time_fullness', label: 'Ref Time %' },
+        { key: 'ref_time_per_second', label: 'Ref Time/s' },
+        { key: 'block_proof_size', label: 'Proof Size' },
+        { key: 'block_proof_size_fullness', label: 'Proof Size %' },
+        { key: 'proof_size_per_second', label: 'Proof Size/s' },
+      );
+    }
+
+    let html = '<thead><tr>';
+    for (const col of columns) html += `<th>${col.label}</th>`;
+    html += '</tr></thead><tbody>';
+
+    for (const b of blocks) {
+      html += '<tr>';
+      for (const col of columns) {
+        const v = b[col.key];
+        let display;
+        if (v == null) display = '—';
+        else if (col.key.includes('fullness')) display = fmtPct(v);
+        else if (col.key.includes('per_second') || col.key === 'transactions_per_second') display = typeof v === 'number' ? fmtSI(v) : '—';
+        else if (col.key === 'block_ref_time' || col.key === 'block_proof_size' || col.key === 'block_gas_mined') display = fmtSI(Number(v));
+        else display = fmtCount(v);
+        html += `<td>${display}</td>`;
+      }
+      html += '</tr>';
+    }
+
+    html += '</tbody>';
+    document.getElementById('raw-data-table').innerHTML = html;
+
+    // Store for CSV export
+    window.__rawDataColumns = columns;
+    window.__rawDataBlocks = blocks;
+  }
+
+  select.addEventListener('change', () => render(select.value));
+  render(platforms[0]);
+
+  // Toggle
+  const toggle = document.getElementById('raw-data-toggle');
+  const content = document.getElementById('raw-data-content');
+  toggle.addEventListener('click', () => {
+    toggle.classList.toggle('open');
+    content.classList.toggle('hidden');
+  });
+
+  // CSV export
+  document.getElementById('csv-export-btn').addEventListener('click', () => {
+    const cols = window.__rawDataColumns;
+    const blocks = window.__rawDataBlocks;
+    if (!cols || !blocks) return;
+    let csv = cols.map(c => c.label).join(',') + '\n';
+    for (const b of blocks) {
+      csv += cols.map(c => {
+        const v = b[c.key];
+        return v == null ? '' : v;
+      }).join(',') + '\n';
+    }
+    navigator.clipboard.writeText(csv).then(() => {
+      const btn = document.getElementById('csv-export-btn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy as CSV', 2000);
+    });
+  });
+}
+
+function renderSelectors(workloads, onChange) {
+  const container = document.getElementById('selectors');
+  container.innerHTML = '';
+
+  const files = [...new Set(workloads.map(w => w.filePath))];
+  const cases = [...new Set(workloads.map(w => w.caseIdx))];
+  const modes = [...new Set(workloads.map(w => w.mode))];
+
+  let selectedFile = files[0];
+  let selectedCase = cases[0];
+  let selectedMode = modes[0];
+
+  function addSelector(label, options, value, onSelect) {
+    if (options.length <= 1) return;
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.alignItems = 'center';
+    wrapper.style.gap = '6px';
+    const lbl = document.createElement('label');
+    lbl.textContent = label;
+    const sel = document.createElement('select');
+    for (const opt of options) {
+      const o = document.createElement('option');
+      o.value = opt;
+      o.textContent = opt.length > 40 ? '...' + opt.slice(-38) : opt;
+      if (opt === value) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener('change', () => onSelect(sel.value));
+    wrapper.appendChild(lbl);
+    wrapper.appendChild(sel);
+    container.appendChild(wrapper);
+  }
+
+  addSelector('File:', files, selectedFile, v => { selectedFile = v; fire(); });
+  addSelector('Case:', cases, selectedCase, v => { selectedCase = v; fire(); });
+  addSelector('Mode:', modes, selectedMode, v => { selectedMode = v; fire(); });
+
+  function fire() {
+    const wl = workloads.find(w => w.filePath === selectedFile && w.caseIdx === selectedCase && w.mode === selectedMode);
+    if (wl) onChange(wl);
+  }
+}
+
+// ── Main Init ────────────────────────────────────────────────────────────────
+async function init() {
+  let report;
+
+  // Try embedded data first
+  const scriptEl = document.getElementById('report-data');
+  const raw = scriptEl ? scriptEl.textContent.trim() : '';
+
+  if (raw && raw !== '/*__REPORT_DATA__*/') {
+    report = JSON.parse(raw);
+  } else {
+    // Development fallback: fetch from sample-report.json
+    try {
+      const resp = await fetch('sample-report.json');
+      report = await resp.json();
+    } catch (e) {
+      document.body.innerHTML = '<div style="padding:48px;text-align:center;color:#EF4444;font-family:Inter,sans-serif"><h2>No report data found</h2><p>Embed report data or place sample-report.json alongside this file.</p></div>';
+      return;
+    }
+  }
+
+  const workloads = preprocessReport(report);
+  if (workloads.length === 0) {
+    document.body.innerHTML = '<div style="padding:48px;text-align:center;color:#6B7280;font-family:Inter,sans-serif"><h2>No benchmark data found in report</h2></div>';
+    return;
+  }
+
+  function renderWorkload(wl) {
+    // Dispose existing charts
+    for (const c of chartInstances) c.dispose();
+    chartInstances.length = 0;
+
+    // Reset dynamic containers
+    document.getElementById('utilization-charts').innerHTML = '';
+    document.getElementById('substrate-section').classList.add('hidden');
+    document.getElementById('step-distribution-section').classList.add('hidden');
+    document.getElementById('comparison-section').classList.add('hidden');
+    document.getElementById('contract-section').classList.add('hidden');
+
+    // Update header
+    const basename = wl.filePath.split('/').pop();
+    document.getElementById('page-title').textContent = 'Benchmark Report — ' + basename;
+    document.getElementById('page-meta').textContent = 'Case ' + wl.caseIdx + ' | Mode: ' + wl.mode;
+
+    const { metricsMap, platforms, hasSubstrate, aggregates, allSteps } = extractMetrics(wl.execReport);
+
+    if (platforms.length === 0) return;
+
+    renderKPICards(platforms, aggregates);
+    renderSummaryStats(platforms, aggregates);
+    renderThroughputCharts(metricsMap, platforms);
+    renderUtilizationCharts(metricsMap, platforms, hasSubstrate, aggregates);
+    renderSubstrateCharts(metricsMap, platforms, aggregates);
+    renderStepDistribution(metricsMap, platforms, allSteps);
+    renderComparisonTable(platforms, aggregates);
+    renderContractInfo(wl.execReport.compiled_contracts, platforms);
+    renderRawDataTable(metricsMap, platforms);
+  }
+
+  renderSelectors(workloads, renderWorkload);
+  renderWorkload(workloads[0]);
+
+  // Responsive resize
+  window.addEventListener('resize', () => {
+    for (const c of chartInstances) c.resize();
+  });
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
